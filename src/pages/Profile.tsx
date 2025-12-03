@@ -184,8 +184,11 @@ export default function Profile() {
           experience={data.experience}
           education={data.education}
           portfolio={data.portfolio}
-          onUpdate={(skills) => {
-            setData((prev) => ({ ...prev, skills }));
+          onUpdate={(newSkills) => {
+            setData((prev) => {
+              // Create a completely new array to ensure React detects the change
+              return { ...prev, skills: [...newSkills] };
+            });
             setIsDirty(true);
           }}
         />
@@ -371,7 +374,7 @@ function ExperienceSection({
   experience: Experience[];
   onUpdate: (exp: Experience[]) => void;
 }) {
-  const [editingId, setEditingId] = useState<number | "new" | null>(null);
+  const [editingIndex, setEditingIndex] = useState<number | "new" | null>(null);
   const [formData, setFormData] = useState<Experience>({
     company: "",
     title: "",
@@ -384,11 +387,12 @@ function ExperienceSection({
     tech_stack: "",
   });
 
-  function startEdit(exp?: Experience) {
-    if (exp) {
+  function startEdit(exp?: Experience, index?: number) {
+    if (exp != null && index != null) {
       setFormData(exp);
-      setEditingId(exp.id || "new");
+      setEditingIndex(index);
     } else {
+      // Adding new experience
       setFormData({
         company: "",
         title: "",
@@ -400,12 +404,12 @@ function ExperienceSection({
         achievements: "",
         tech_stack: "",
       });
-      setEditingId("new");
+      setEditingIndex("new");
     }
   }
 
   function cancelEdit() {
-    setEditingId(null);
+    setEditingIndex(null);
     setFormData({
       company: "",
       title: "",
@@ -426,22 +430,22 @@ function ExperienceSection({
     }
 
     let updated = [...experience];
-    if (editingId === "new") {
+    if (editingIndex === "new") {
+      // Adding new experience
       updated.push({ ...formData });
-    } else {
-      const index = updated.findIndex((e) => e.id === editingId);
-      if (index >= 0) {
-        updated[index] = { ...formData, id: editingId as number };
-      }
+    } else if (editingIndex !== null && typeof editingIndex === "number" && editingIndex >= 0 && editingIndex < updated.length) {
+      // Updating existing experience at index
+      const existing = updated[editingIndex];
+      updated[editingIndex] = { ...formData, id: existing.id };
     }
     onUpdate(updated);
     cancelEdit();
   }
 
-  function deleteExperience(id: number) {
-    if (confirm("Are you sure you want to delete this experience?")) {
-      onUpdate(experience.filter((e) => e.id !== id));
-    }
+  function deleteExperience(index: number) {
+    // Remove confirm dialog - it was blocking deletion in Tauri
+    const updated = experience.filter((_, i) => i !== index);
+    onUpdate(updated);
   }
 
   return (
@@ -453,9 +457,9 @@ function ExperienceSection({
         </button>
       </div>
 
-      {editingId && (
+      {editingIndex !== null && (
         <div className="edit-form">
-          <h3>{editingId === "new" ? "Add Experience" : "Edit Experience"}</h3>
+          <h3>{editingIndex === "new" ? "Add Experience" : "Edit Experience"}</h3>
           <div className="form-grid">
             <div className="form-group">
               <label>
@@ -499,22 +503,26 @@ function ExperienceSection({
             <div className="form-group">
               <label>Start Date</label>
               <input
-                type="month"
-                value={formData.start_date || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, start_date: e.target.value })
-                }
+                type="date"
+                value={formData.start_date ? (formData.start_date.includes('-') && formData.start_date.length === 7 ? `${formData.start_date}-01` : formData.start_date) : ""}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  // Store full date (YYYY-MM-DD) instead of just YYYY-MM
+                  setFormData({ ...formData, start_date: value || "" });
+                }}
               />
             </div>
 
             <div className="form-group">
               <label>End Date</label>
               <input
-                type="month"
-                value={formData.end_date || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, end_date: e.target.value })
-                }
+                type="date"
+                value={formData.end_date ? (formData.end_date.includes('-') && formData.end_date.length === 7 ? `${formData.end_date}-01` : formData.end_date) : ""}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  // Store full date (YYYY-MM-DD) instead of just YYYY-MM
+                  setFormData({ ...formData, end_date: value || "" });
+                }}
                 disabled={formData.is_current}
               />
             </div>
@@ -589,7 +597,7 @@ function ExperienceSection({
             <p>No experience entries yet. Click "Add Experience" to get started.</p>
           </div>
         ) : (
-          experience.map((exp) => (
+          experience.map((exp, index) => (
             <div key={exp.id || Math.random()} className="item-card">
               <div className="item-header">
                 <div>
@@ -598,10 +606,13 @@ function ExperienceSection({
                   <p className="item-meta">
                     {exp.start_date && (
                       <span>
-                        {new Date(exp.start_date + "-01").toLocaleDateString("en-US", {
-                          month: "short",
-                          year: "numeric",
-                        })}
+                        {(() => {
+                          const dateStr = exp.start_date.length === 7 ? `${exp.start_date}-01` : exp.start_date;
+                          const date = new Date(dateStr);
+                          const month = String(date.getMonth() + 1).padStart(2, '0');
+                          const year = date.getFullYear();
+                          return `${month}-${year}`;
+                        })()}
                       </span>
                     )}
                     {exp.start_date && (exp.is_current || exp.end_date) && " - "}
@@ -610,10 +621,13 @@ function ExperienceSection({
                     ) : (
                       exp.end_date && (
                         <span>
-                          {new Date(exp.end_date + "-01").toLocaleDateString("en-US", {
-                            month: "short",
-                            year: "numeric",
-                          })}
+                          {(() => {
+                            const dateStr = exp.end_date.length === 7 ? `${exp.end_date}-01` : exp.end_date;
+                            const date = new Date(dateStr);
+                            const month = String(date.getMonth() + 1).padStart(2, '0');
+                            const year = date.getFullYear();
+                            return `${month}-${year}`;
+                          })()}
                         </span>
                       )
                     )}
@@ -622,14 +636,15 @@ function ExperienceSection({
                 </div>
                 <div className="item-actions">
                   <button
-                    onClick={() => startEdit(exp)}
+                    onClick={() => startEdit(exp, index)}
                     className="edit-button"
                   >
                     Edit
                   </button>
                   <button
-                    onClick={() => exp.id && deleteExperience(exp.id)}
+                    onClick={() => deleteExperience(index)}
                     className="delete-button"
+                    type="button"
                   >
                     Delete
                   </button>
@@ -715,7 +730,8 @@ function SkillsSection({
     const newSkill: Skill = {
       name: quickAddName.trim(),
     };
-    onUpdate([...skills, newSkill]);
+    const updated = [...skills, newSkill];
+    onUpdate(updated);
     setQuickAddName("");
   }
 
@@ -775,11 +791,23 @@ function SkillsSection({
   }
 
   function deleteSkill(index: number) {
-    if (confirm("Are you sure you want to delete this skill?")) {
-      onUpdate(
-        skills.filter((_, i) => i !== index)
-      );
+    // Create a completely new array to ensure React detects the change
+    const updated = skills.filter((_, i) => i !== index);
+    
+    // Reset editing state if we're deleting the skill being edited
+    if (editingIndex === index) {
+      setEditingIndex(null);
+      setFormData({ name: "" });
+      setLinkedExperienceIds([]);
+      setLinkedEducationIds([]);
+      setLinkedPortfolioIds([]);
+    } else if (editingIndex !== null && editingIndex > index) {
+      // Adjust editing index if we're deleting before the edited item
+      setEditingIndex(editingIndex - 1);
     }
+    
+    // Update parent state - this will trigger a re-render with new props
+    onUpdate([...updated]);
   }
 
   return (
@@ -916,7 +944,7 @@ function SkillsSection({
         </div>
       )}
 
-      <div className="skills-grid">
+      <div className="skills-grid" data-skills-count={skills.length}>
         {skills.length === 0 ? (
           <div className="empty-state">
             <p>No skills yet. Use quick add above or click "Add Skill" to get started.</p>
@@ -928,8 +956,17 @@ function SkillsSection({
             const eduCount = links.educationIds.length;
             const projCount = links.portfolioIds.length;
 
+            // Use index as key since we're remounting the entire component on changes
+            // This ensures React properly tracks items during deletion
+            const itemKey = `skill-${index}-${skill.name}`;
+
             return (
-              <div key={skill.id ?? index} className="skill-item">
+              <div 
+                key={itemKey} 
+                className="skill-item" 
+                data-skill-index={index} 
+                data-skill-name={skill.name}
+              >
                 <div className="skill-info">
                   <span className="skill-name">{skill.name}</span>
                   <div className="skill-links">
@@ -944,16 +981,25 @@ function SkillsSection({
                     )}
                   </div>
                 </div>
-                <div className="skill-actions">
+                <div className="skill-actions" onClick={(e) => e.stopPropagation()}>
                   <button
-                    onClick={() => startEdit(skill, index)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      startEdit(skill, index);
+                    }}
                     className="edit-button"
                   >
                     Edit
                   </button>
                   <button
-                    onClick={() => deleteSkill(index)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      deleteSkill(index);
+                    }}
                     className="delete-button"
+                    type="button"
                   >
                     Delete
                   </button>
@@ -1149,21 +1195,25 @@ function EducationSection({
                 <div className="form-group">
                   <label>Start Date</label>
                   <input
-                    type="month"
-                    value={eduFormData.start_date || ""}
-                    onChange={(e) =>
-                      setEduFormData({ ...eduFormData, start_date: e.target.value })
-                    }
+                    type="date"
+                    value={eduFormData.start_date ? (eduFormData.start_date.includes('-') && eduFormData.start_date.length === 7 ? `${eduFormData.start_date}-01` : eduFormData.start_date) : ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      // Store full date (YYYY-MM-DD)
+                      setEduFormData({ ...eduFormData, start_date: value || "" });
+                    }}
                   />
                 </div>
                 <div className="form-group">
                   <label>End Date</label>
                   <input
-                    type="month"
-                    value={eduFormData.end_date || ""}
-                    onChange={(e) =>
-                      setEduFormData({ ...eduFormData, end_date: e.target.value })
-                    }
+                    type="date"
+                    value={eduFormData.end_date ? (eduFormData.end_date.includes('-') && eduFormData.end_date.length === 7 ? `${eduFormData.end_date}-01` : eduFormData.end_date) : ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      // Store full date (YYYY-MM-DD)
+                      setEduFormData({ ...eduFormData, end_date: value || "" });
+                    }}
                   />
                 </div>
                 <div className="form-group">
@@ -1272,24 +1322,28 @@ function EducationSection({
                 <div className="form-group">
                   <label>Issue Date</label>
                   <input
-                    type="month"
-                    value={certFormData.issue_date || ""}
-                    onChange={(e) =>
-                      setCertFormData({ ...certFormData, issue_date: e.target.value })
-                    }
+                    type="date"
+                    value={certFormData.issue_date ? (certFormData.issue_date.includes('-') && certFormData.issue_date.length === 7 ? `${certFormData.issue_date}-01` : certFormData.issue_date) : ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      // Store full date (YYYY-MM-DD)
+                      setCertFormData({ ...certFormData, issue_date: value || "" });
+                    }}
                   />
                 </div>
                 <div className="form-group">
                   <label>Expiration Date</label>
                   <input
-                    type="month"
-                    value={certFormData.expiration_date || ""}
-                    onChange={(e) =>
+                    type="date"
+                    value={certFormData.expiration_date ? (certFormData.expiration_date.includes('-') && certFormData.expiration_date.length === 7 ? `${certFormData.expiration_date}-01` : certFormData.expiration_date) : ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      // Store full date (YYYY-MM-DD)
                       setCertFormData({
                         ...certFormData,
-                        expiration_date: e.target.value,
-                      })
-                    }
+                        expiration_date: value || "",
+                      });
+                    }}
                   />
                 </div>
                 <div className="form-group">
