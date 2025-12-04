@@ -2121,7 +2121,7 @@ fn format_date(date_str: &str) -> String {
     date_str.to_string()
 }
 
-fn render_resume_to_text(resume: &GeneratedResume) -> String {
+pub fn render_resume_to_text(resume: &GeneratedResume) -> String {
     let mut output = String::new();
     
     if let Some(headline) = &resume.headline {
@@ -2151,7 +2151,7 @@ fn render_resume_to_text(resume: &GeneratedResume) -> String {
     output
 }
 
-fn render_letter_to_text(letter: &GeneratedLetter) -> String {
+pub fn render_letter_to_text(letter: &GeneratedLetter) -> String {
     let mut output = String::new();
     
     if let Some(subject) = &letter.subject {

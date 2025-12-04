@@ -3,6 +3,7 @@
 
 mod db;
 mod ai_cache;
+mod ai_client;
 mod commands;
 
 use db::init_database;

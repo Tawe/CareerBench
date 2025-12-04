@@ -162,14 +162,54 @@ export default function Dashboard() {
       </div>
 
       <div className="dashboard-section">
-        <h2>Activity (Last 30 Days)</h2>
-        <div className="activity-chart">
-          {data.activity_last_30_days.map((point) => (
-            <div key={point.date} className="activity-bar">
-              <div className="bar-label">{new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
-              <div className="bar-value">{point.applications_created}</div>
-            </div>
-          ))}
+        <h2>Activity Calendar (Last 30 Days)</h2>
+        <div className="activity-calendar">
+          {data.activity_last_30_days.map((point) => {
+            const date = new Date(point.date);
+            const dayOfWeek = date.toLocaleDateString('en-US', { weekday: 'short' });
+            const day = date.getDate();
+            const hasActivity = point.applications_created > 0 || point.interviews_completed > 0 || point.offers_received > 0;
+            
+            return (
+              <div 
+                key={point.date} 
+                className={`calendar-day ${hasActivity ? 'has-activity' : ''}`}
+                title={`${point.date}: ${point.applications_created} applications, ${point.interviews_completed} interviews, ${point.offers_received} offers`}
+              >
+                <div className="calendar-day-header">
+                  <span className="calendar-day-name">{dayOfWeek}</span>
+                  <span className="calendar-day-number">{day}</span>
+                </div>
+                {hasActivity && (
+                  <div className="calendar-day-activity">
+                    {point.applications_created > 0 && (
+                      <span className="activity-dot applications" title={`${point.applications_created} applications`}></span>
+                    )}
+                    {point.interviews_completed > 0 && (
+                      <span className="activity-dot interviews" title={`${point.interviews_completed} interviews`}></span>
+                    )}
+                    {point.offers_received > 0 && (
+                      <span className="activity-dot offers" title={`${point.offers_received} offers`}></span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="calendar-legend">
+          <div className="legend-item">
+            <span className="activity-dot applications"></span>
+            <span>Applications</span>
+          </div>
+          <div className="legend-item">
+            <span className="activity-dot interviews"></span>
+            <span>Interviews</span>
+          </div>
+          <div className="legend-item">
+            <span className="activity-dot offers"></span>
+            <span>Offers</span>
+          </div>
         </div>
       </div>
     </div>

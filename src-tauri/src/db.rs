@@ -66,7 +66,7 @@ fn run_migrations(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn migration_001_initial_schema(conn: &Connection) -> Result<()> {
+pub fn migration_001_initial_schema(conn: &Connection) -> Result<()> {
             // User profile
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS user_profile (

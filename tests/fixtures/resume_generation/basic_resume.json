@@ -1,0 +1,38 @@
+{
+  "summary": "Experienced software engineer with 5+ years building scalable systems",
+  "headline": "Senior Software Engineer",
+  "sections": [
+    {
+      "title": "Experience",
+      "items": [
+        {
+          "heading": "Senior Software Engineer at Tech Corp",
+          "subheading": "2020 - Present",
+          "bullets": [
+            "Led development of microservices architecture serving 1M+ users",
+            "Implemented CI/CD pipelines reducing deployment time by 50%"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Skills",
+      "items": [
+        {
+          "heading": "Technical Skills",
+          "subheading": null,
+          "bullets": [
+            "Rust, TypeScript, PostgreSQL",
+            "AWS, Kubernetes, Docker"
+          ]
+        }
+      ]
+    }
+  ],
+  "highlights": [
+    "5+ years of experience",
+    "Led team of 5 engineers",
+    "Shipped 10+ production systems"
+  ]
+}
+

@@ -1,0 +1,28 @@
+{
+  "titleSuggestion": "Senior Software Engineer",
+  "companySuggestion": "Tech Corp",
+  "seniority": "Senior",
+  "location": "San Francisco, CA",
+  "summary": "We are looking for an experienced software engineer to join our team.",
+  "responsibilities": [
+    "Design and implement scalable backend systems",
+    "Collaborate with cross-functional teams",
+    "Mentor junior engineers"
+  ],
+  "requiredSkills": [
+    "Rust",
+    "TypeScript",
+    "PostgreSQL"
+  ],
+  "niceToHaveSkills": [
+    "Kubernetes",
+    "AWS"
+  ],
+  "domainTags": [
+    "Backend",
+    "Full Stack"
+  ],
+  "seniorityScore": 0.75,
+  "remoteFriendly": true
+}
+

@@ -1,0 +1,12 @@
+{
+  "subject": "Application for Senior Software Engineer Position",
+  "greeting": "Dear Hiring Manager",
+  "bodyParagraphs": [
+    "I am writing to express my interest in the Senior Software Engineer position at your company.",
+    "With over 5 years of experience in building scalable systems, I am excited about the opportunity to contribute to your team.",
+    "My experience with Rust and TypeScript aligns well with your requirements, and I am eager to bring my expertise to your organization."
+  ],
+  "closing": "Best regards",
+  "signature": "John Doe"
+}
+

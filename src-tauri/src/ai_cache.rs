@@ -144,3 +144,117 @@ pub fn ai_cache_clear_all(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+    use serde_json::json;
+    use chrono::Utc;
+
+    fn setup_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE ai_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                purpose TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                model_name TEXT NOT NULL,
+                request_payload TEXT NOT NULL,
+                response_payload TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT
+            )",
+            [],
+        ).unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_compute_input_hash() {
+        let payload = json!({"test": "data"});
+        let hash1 = compute_input_hash(&payload).unwrap();
+        let hash2 = compute_input_hash(&payload).unwrap();
+        
+        // Same input should produce same hash
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 64); // SHA256 produces 64 hex chars
+        
+        // Different input should produce different hash
+        let payload2 = json!({"test": "different"});
+        let hash3 = compute_input_hash(&payload2).unwrap();
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_ai_cache_put_and_get() {
+        let conn = setup_test_db();
+        let now = Utc::now().to_rfc3339();
+        
+        let purpose = "test_purpose";
+        let input_hash = "test_hash";
+        let request = json!({"input": "test"});
+        let response = json!({"output": "result"});
+        
+        // Put entry
+        ai_cache_put(
+            &conn,
+            purpose,
+            input_hash,
+            "test_model",
+            &request,
+            &response,
+            Some(30),
+            &now,
+        ).unwrap();
+        
+        // Get entry
+        let entry = ai_cache_get(&conn, purpose, input_hash, &now).unwrap();
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+        assert_eq!(entry.purpose, purpose);
+        assert_eq!(entry.input_hash, input_hash);
+        assert_eq!(entry.response_payload, response);
+    }
+
+    #[test]
+    fn test_ai_cache_expiration() {
+        let conn = setup_test_db();
+        let now = Utc::now().to_rfc3339();
+        
+        // Create entry that expires in 1 day
+        let purpose = "test_purpose";
+        let input_hash = "test_hash";
+        let request = json!({"input": "test"});
+        let response = json!({"output": "result"});
+        
+        ai_cache_put(
+            &conn,
+            purpose,
+            input_hash,
+            "test_model",
+            &request,
+            &response,
+            Some(1),
+            &now,
+        ).unwrap();
+        
+        // Should be retrievable now
+        let entry = ai_cache_get(&conn, purpose, input_hash, &now).unwrap();
+        assert!(entry.is_some());
+        
+        // Simulate expiration by using a future date
+        let future = (Utc::now() + chrono::Duration::days(2)).to_rfc3339();
+        let entry = ai_cache_get(&conn, purpose, input_hash, &future).unwrap();
+        assert!(entry.is_none());
+    }
+
+    #[test]
+    fn test_ai_cache_miss() {
+        let conn = setup_test_db();
+        let now = Utc::now().to_rfc3339();
+        
+        // Try to get non-existent entry
+        let entry = ai_cache_get(&conn, "nonexistent", "hash", &now).unwrap();
+        assert!(entry.is_none());
+    }
+}

@@ -149,3 +149,206 @@
   border-radius: 0.5rem;
   margin-bottom: 1rem;
 }
+
+.dashboard-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.dashboard-section {
+  background-color: white;
+  padding: 1.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+.dashboard-section h2 {
+  margin: 0 0 1rem 0;
+  font-size: 1.125rem;
+  font-weight: 500;
+  color: var(--cb-text);
+}
+
+.status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.status-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.status-item:last-child {
+  border-bottom: none;
+}
+
+.status-name {
+  font-size: 0.875rem;
+  color: var(--cb-text);
+  text-transform: capitalize;
+}
+
+.status-count {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--cb-text);
+}
+
+.funnel {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  min-height: 200px;
+  padding: 1rem 0;
+}
+
+.funnel-step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.funnel-label {
+  font-size: 0.75rem;
+  color: var(--cb-text-muted);
+  text-align: center;
+}
+
+.funnel-bar {
+  width: 100%;
+  background-color: var(--cb-accent-soft, #6366f1);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 0.25rem 0.25rem 0 0;
+  min-height: 30px;
+  transition: background-color 0.15s ease;
+}
+
+.funnel-bar:hover {
+  background-color: var(--cb-accent, #6366f1);
+}
+
+.activity-calendar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.5rem;
+  padding: 1rem 0;
+}
+
+.calendar-day {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid #e5e7eb;
+  background-color: #ffffff;
+  transition: all 0.15s ease;
+  cursor: pointer;
+  min-height: 60px;
+}
+
+.calendar-day:hover {
+  background-color: #f9fafb;
+  border-color: var(--cb-accent-soft, #818cf8);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.calendar-day.has-activity {
+  background-color: #f0f9ff;
+  border-color: #bae6fd;
+}
+
+.calendar-day.has-activity:hover {
+  background-color: #e0f2fe;
+  border-color: #7dd3fc;
+}
+
+.calendar-day-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.125rem;
+  width: 100%;
+  margin-bottom: 0.25rem;
+}
+
+.calendar-day-name {
+  font-size: 0.625rem;
+  color: var(--cb-text-muted);
+  text-transform: uppercase;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+
+.calendar-day-number {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--cb-text);
+}
+
+.calendar-day-activity {
+  display: flex;
+  gap: 0.25rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.activity-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.activity-dot.applications {
+  background-color: #3b82f6;
+}
+
+.activity-dot.interviews {
+  background-color: #8b5cf6;
+}
+
+.activity-dot.offers {
+  background-color: #10b981;
+}
+
+.calendar-legend {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--cb-text-muted);
+}
+
+.legend-item .activity-dot {
+  width: 8px;
+  height: 8px;
+}
