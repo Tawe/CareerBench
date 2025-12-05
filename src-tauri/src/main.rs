@@ -4,6 +4,7 @@
 mod db;
 mod ai_cache;
 mod ai_client;
+mod ai;
 mod commands;
 
 use db::init_database;
@@ -34,6 +35,16 @@ async fn main() {
             commands::archive_application,
             commands::generate_resume_for_job,
             commands::generate_cover_letter_for_job,
+            commands::ai_resume_suggestions,
+            commands::ai_cover_letter,
+            commands::ai_skill_suggestions,
+            commands::get_ai_settings,
+            commands::save_ai_settings,
+            commands::test_ai_connection,
+            commands::get_artifacts_for_application,
+            commands::get_artifacts_for_job,
+            commands::get_artifact,
+            commands::update_artifact,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

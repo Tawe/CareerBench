@@ -2,5 +2,6 @@
 pub mod db;
 pub mod ai_cache;
 pub mod ai_client;
+pub mod ai;
 pub mod commands;
 

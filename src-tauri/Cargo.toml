@@ -24,6 +24,10 @@ sha2 = { version = "0.10", features = ["std"] }
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
+async-trait = "0.1"
+# Local model inference - using llama-cpp-sys-3 for GGUF model support
+llama-cpp-sys-3 = "0.5"
+num_cpus = "1.16"
 
 [features]
 default = ["custom-protocol"]

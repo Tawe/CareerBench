@@ -56,6 +56,16 @@ export default function Layout({ children }: LayoutProps) {
         </svg>
       )
     },
+    { 
+      path: "/settings", 
+      label: "Settings",
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3"></path>
+        </svg>
+      )
+    },
   ];
 
   return (

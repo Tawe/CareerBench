@@ -969,6 +969,9 @@ pub struct ParsedJob {
 #[tauri::command]
 pub async fn parse_job_with_ai(job_id: i64) -> Result<ParsedJob, String> {
     use crate::ai_cache::{ai_cache_get, ai_cache_put, compute_input_hash, CACHE_TTL_JOB_PARSE_DAYS};
+    use crate::ai::resolver::ResolvedProvider;
+    use crate::ai::types::{JobParsingInput, JobMeta};
+    use crate::ai::settings::load_ai_settings;
     
     let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
     let now = Utc::now().to_rfc3339();
@@ -1009,19 +1012,55 @@ pub async fn parse_job_with_ai(job_id: i64) -> Result<ParsedJob, String> {
         return Ok(parsed);
     }
 
-    // Step 5: Cache miss - call AI provider (placeholder for now)
-    // TODO: Replace with actual AI provider call
-    let parsed = call_ai_provider_for_parsing(raw_description).await?;
+    // Step 5: Cache miss - call AI provider using new provider system
+    let provider = ResolvedProvider::resolve()
+        .map_err(|e| format!("Failed to resolve provider: {}", e))?;
+    
+    // Build job parsing input
+    let parsing_input = JobParsingInput {
+        job_description: raw_description.to_string(),
+        job_meta: Some(JobMeta {
+            source: job.job_source.clone(),
+            url: job.posting_url.clone(),
+        }),
+    };
+    
+    // Call AI provider
+    let parsed_output = provider.as_provider()
+        .parse_job(parsing_input)
+        .await
+        .map_err(|e| format!("AI parsing failed: {}", e))?;
+    
+    // Convert ParsedJobOutput to ParsedJob (they have the same structure)
+    let parsed = ParsedJob {
+        title_suggestion: parsed_output.title_suggestion,
+        company_suggestion: parsed_output.company_suggestion,
+        seniority: parsed_output.seniority,
+        location: parsed_output.location,
+        summary: parsed_output.summary,
+        responsibilities: parsed_output.responsibilities,
+        required_skills: parsed_output.required_skills,
+        nice_to_have_skills: parsed_output.nice_to_have_skills,
+        domain_tags: parsed_output.domain_tags,
+        seniority_score: parsed_output.seniority_score,
+        remote_friendly: parsed_output.remote_friendly,
+    };
 
     // Step 6: Store in cache
     let response_payload = serde_json::to_value(&parsed)
         .map_err(|e| format!("Failed to serialize parsed job: {}", e))?;
+    
+    // Get model name from settings for cache
+    let model_name = crate::ai::settings::load_ai_settings()
+        .ok()
+        .and_then(|s| s.model_name)
+        .unwrap_or_else(|| "unknown-model".to_string());
 
     ai_cache_put(
         &conn,
         "job_parse",
         &input_hash,
-        "placeholder-model", // TODO: Use actual model name
+        &model_name,
         &request_payload,
         &response_payload,
         Some(CACHE_TTL_JOB_PARSE_DAYS),
@@ -1062,84 +1101,6 @@ fn update_job_with_parsed_data(
     Ok(())
 }
 
-// Placeholder AI provider call - will be replaced with actual implementation
-async fn call_ai_provider_for_parsing(raw_description: &str) -> Result<ParsedJob, String> {
-    // TODO: Implement actual AI provider call
-    // For now, return a basic parsed structure with some heuristics
-    
-    let description_lower = raw_description.to_lowercase();
-    
-    // Simple heuristics for demonstration
-    let mut responsibilities = Vec::new();
-    let mut required_skills = Vec::new();
-    let mut nice_to_have_skills = Vec::new();
-    
-    // Extract some basic patterns (very simple - real AI would do much better)
-    if description_lower.contains("node") || description_lower.contains("node.js") {
-        required_skills.push("Node.js".to_string());
-    }
-    if description_lower.contains("react") {
-        required_skills.push("React".to_string());
-    }
-    if description_lower.contains("typescript") {
-        required_skills.push("TypeScript".to_string());
-    }
-    if description_lower.contains("python") {
-        required_skills.push("Python".to_string());
-    }
-    if description_lower.contains("aws") {
-        required_skills.push("AWS".to_string());
-    }
-    if description_lower.contains("docker") || description_lower.contains("kubernetes") {
-        nice_to_have_skills.push("Containerization".to_string());
-    }
-    
-    // Try to extract responsibilities from common patterns
-    for line in raw_description.lines() {
-        let line = line.trim();
-        if line.starts_with("-") || line.starts_with("•") || line.starts_with("*") {
-            let cleaned = line.trim_start_matches(|c: char| c == '-' || c == '•' || c == '*').trim();
-            if cleaned.len() > 20 && cleaned.len() < 200 {
-                responsibilities.push(cleaned.to_string());
-            }
-        }
-    }
-    
-    // Limit responsibilities
-    if responsibilities.len() > 10 {
-        responsibilities.truncate(10);
-    }
-    
-    // Determine seniority from keywords
-    let seniority = if description_lower.contains("senior") || description_lower.contains("sr.") {
-        Some("Senior".to_string())
-    } else if description_lower.contains("junior") || description_lower.contains("jr.") {
-        Some("Junior".to_string())
-    } else if description_lower.contains("lead") || description_lower.contains("principal") {
-        Some("Lead".to_string())
-    } else {
-        None
-    };
-    
-    // Check for remote
-    let remote_friendly = description_lower.contains("remote") || 
-                         description_lower.contains("work from home") ||
-                         description_lower.contains("wfh");
-    
-    Ok(ParsedJob {
-        title_suggestion: None,
-        company_suggestion: None,
-        seniority,
-        location: None,
-        summary: None,
-        responsibilities,
-        required_skills,
-        nice_to_have_skills,
-        domain_tags: Vec::new(),
-        seniority_score: None,
-        remote_friendly: Some(remote_friendly),
-    })
-}
 
 // Application types
 #[derive(Debug, Serialize, Deserialize)]
@@ -1744,18 +1705,82 @@ pub async fn generate_resume_for_job(
         });
     }
 
-    // Cache miss - generate resume (placeholder AI)
-    let resume = generate_resume_with_ai(&profile_data, &job, options.as_ref()).await?;
+    // Cache miss - generate resume using AI provider
+    let provider = ResolvedProvider::resolve()
+        .map_err(|e| format!("Failed to resolve provider: {}", e))?;
+    
+    // Build profile data JSON for AI provider
+    let profile_json = serde_json::json!({
+        "profile": profile_data.profile,
+        "experience": profile_data.experience,
+        "skills": profile_data.skills,
+        "education": profile_data.education,
+        "certifications": profile_data.certifications,
+        "portfolio": profile_data.portfolio,
+    });
+    
+    // Build job description
+    let job_description = job.raw_description
+        .as_deref()
+        .unwrap_or("")
+        .to_string();
+    
+    // Convert GenerationOptions to ResumeOptions
+    let resume_options = options.as_ref().map(|opt| crate::ai::types::ResumeOptions {
+        tone: opt.tone.clone(),
+        length: opt.length.clone(),
+        focus: opt.focus.clone(),
+    });
+    
+    // Call AI provider
+    let resume_input = crate::ai::types::ResumeInput {
+        profile_data: profile_json,
+        job_description,
+        options: resume_options,
+    };
+    
+    let resume_suggestions = provider.as_provider()
+        .generate_resume_suggestions(resume_input)
+        .await
+        .map_err(|e| format!("AI generation failed: {}", e))?;
+    
+    // Convert ResumeSuggestions to GeneratedResume
+    // Convert sections from ai::types::ResumeSection to commands::ResumeSection
+    let sections: Vec<ResumeSection> = resume_suggestions.sections.into_iter().map(|s| {
+        ResumeSection {
+            title: s.title,
+            items: s.items.into_iter().map(|item| {
+                ResumeSectionItem {
+                    heading: item.heading,
+                    subheading: item.subheading,
+                    bullets: item.bullets,
+                }
+            }).collect(),
+        }
+    }).collect();
+    
+    let resume = GeneratedResume {
+        summary: resume_suggestions.summary,
+        headline: resume_suggestions.headline,
+        sections,
+        highlights: resume_suggestions.highlights,
+    };
 
     // Store in cache
     let response_payload = serde_json::to_value(&resume)
         .map_err(|e| format!("Failed to serialize resume: {}", e))?;
+    
+    // Get model name from settings for cache
+    let model_name = crate::ai::settings::load_ai_settings()
+        .ok()
+        .and_then(|s| s.model_name)
+        .unwrap_or_else(|| "unknown-model".to_string());
 
     ai_cache_put(
         &conn,
         "resume_generation",
         &input_hash,
-        "placeholder-model",
+        &model_name,
         &request_payload,
         &response_payload,
         Some(CACHE_TTL_RESUME_DAYS),
@@ -1843,18 +1868,68 @@ pub async fn generate_cover_letter_for_job(
         });
     }
 
-    // Cache miss - generate letter (placeholder AI)
-    let letter = generate_cover_letter_with_ai(&profile_data, &job, options.as_ref()).await?;
+    // Cache miss - generate letter using AI provider
+    let provider = ResolvedProvider::resolve()
+        .map_err(|e| format!("Failed to resolve provider: {}", e))?;
+    
+    // Build profile data JSON for AI provider
+    let profile_json = serde_json::json!({
+        "profile": profile_data.profile,
+        "experience": profile_data.experience,
+        "skills": profile_data.skills,
+        "education": profile_data.education,
+    });
+    
+    // Build job description
+    let job_description = job.raw_description
+        .as_deref()
+        .unwrap_or("")
+        .to_string();
+    
+    // Convert GenerationOptions to CoverLetterOptions
+    let letter_options = options.as_ref().map(|opt| crate::ai::types::CoverLetterOptions {
+        tone: opt.tone.clone(),
+        length: opt.length.clone(),
+        audience: opt.audience.clone(),
+    });
+    
+    // Call AI provider
+    let letter_input = crate::ai::types::CoverLetterInput {
+        profile_data: profile_json,
+        job_description,
+        company_name: job.company.clone(),
+        options: letter_options,
+    };
+    
+    let cover_letter = provider.as_provider()
+        .generate_cover_letter(letter_input)
+        .await
+        .map_err(|e| format!("AI generation failed: {}", e))?;
+
+    // Convert CoverLetter to GeneratedLetter (they have the same structure)
+    let letter = GeneratedLetter {
+        subject: cover_letter.subject,
+        greeting: cover_letter.greeting,
+        body_paragraphs: cover_letter.body_paragraphs,
+        closing: cover_letter.closing,
+        signature: cover_letter.signature,
+    };
 
     // Store in cache
     let response_payload = serde_json::to_value(&letter)
         .map_err(|e| format!("Failed to serialize letter: {}", e))?;
+    
+    // Get model name from settings for cache
+    let model_name = crate::ai::settings::load_ai_settings()
+        .ok()
+        .and_then(|s| s.model_name)
+        .unwrap_or_else(|| "unknown-model".to_string());
 
     ai_cache_put(
         &conn,
         "cover_letter_generation",
         &input_hash,
-        "placeholder-model",
+        &model_name,
         &request_payload,
         &response_payload,
         Some(CACHE_TTL_COVER_LETTER_DAYS),
@@ -2178,5 +2253,226 @@ pub fn render_letter_to_text(letter: &GeneratedLetter) -> String {
     }
     
     output
+}
+
+// ============================================================================
+// AI Provider Commands
+// ============================================================================
+
+use crate::ai::resolver::ResolvedProvider;
+use crate::ai::types::*;
+use crate::ai::settings::{AiSettings, load_ai_settings};
+
+#[tauri::command]
+pub async fn ai_resume_suggestions(input: ResumeInput) -> Result<ResumeSuggestions, String> {
+    let provider = ResolvedProvider::resolve()
+        .map_err(|e| format!("Failed to resolve provider: {}", e))?;
+    
+    let result = provider.as_provider()
+        .generate_resume_suggestions(input)
+        .await
+        .map_err(|e| format!("AI error: {}", e))?;
+    
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn ai_cover_letter(input: CoverLetterInput) -> Result<CoverLetter, String> {
+    let provider = ResolvedProvider::resolve()
+        .map_err(|e| format!("Failed to resolve provider: {}", e))?;
+    
+    let result = provider.as_provider()
+        .generate_cover_letter(input)
+        .await
+        .map_err(|e| format!("AI error: {}", e))?;
+    
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn ai_skill_suggestions(input: SkillSuggestionsInput) -> Result<SkillSuggestions, String> {
+    let provider = ResolvedProvider::resolve()
+        .map_err(|e| format!("Failed to resolve provider: {}", e))?;
+    
+    let result = provider.as_provider()
+        .generate_skill_suggestions(input)
+        .await
+        .map_err(|e| format!("AI error: {}", e))?;
+    
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn get_ai_settings() -> Result<AiSettings, String> {
+    crate::ai::settings::load_ai_settings()
+        .map_err(|e| format!("Failed to load settings: {}", e))
+}
+
+#[tauri::command]
+pub async fn save_ai_settings(settings: AiSettings) -> Result<(), String> {
+    crate::ai::settings::save_ai_settings(&settings)
+        .map_err(|e| format!("Failed to save settings: {}", e))
+}
+
+#[tauri::command]
+pub async fn test_ai_connection() -> Result<String, String> {
+    let provider = ResolvedProvider::resolve()
+        .map_err(|e| format!("Failed to resolve provider: {}", e))?;
+    
+    // Test with a simple skill suggestions request
+    let test_input = SkillSuggestionsInput {
+        current_skills: vec!["Rust".to_string(), "TypeScript".to_string()],
+        job_description: "Looking for a software engineer with Python and React experience.".to_string(),
+        experience: None,
+    };
+    
+    match provider.as_provider().generate_skill_suggestions(test_input).await {
+        Ok(_) => Ok("Connection successful!".to_string()),
+        Err(e) => Err(format!("Connection test failed: {}", e)),
+    }
+}
+
+// ============================================================================
+// Artifact Management Commands
+// ============================================================================
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct Artifact {
+    pub id: i64,
+    pub application_id: Option<i64>,
+    pub job_id: Option<i64>,
+    pub r#type: String,
+    pub title: String,
+    pub content: Option<String>,
+    pub format: Option<String>,
+    pub ai_payload: Option<String>,
+    pub ai_model: Option<String>,
+    pub source: Option<String>,
+    pub version: Option<i64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[tauri::command]
+pub fn get_artifacts_for_application(application_id: i64) -> Result<Vec<Artifact>, String> {
+    let conn = get_connection()
+        .map_err(|e| format!("Failed to get database connection: {}", e))?;
+    
+    let mut stmt = conn.prepare(
+        "SELECT id, application_id, job_id, type, title, content, format, ai_payload, ai_model, source, version, created_at, updated_at
+         FROM artifacts
+         WHERE application_id = ?
+         ORDER BY created_at DESC"
+    )
+    .map_err(|e| format!("Failed to prepare statement: {}", e))?;
+    
+    let artifacts = stmt.query_map([application_id], |row| {
+        Ok(Artifact {
+            id: row.get(0)?,
+            application_id: row.get(1)?,
+            job_id: row.get(2)?,
+            r#type: row.get(3)?,
+            title: row.get(4)?,
+            content: row.get(5)?,
+            format: row.get(6)?,
+            ai_payload: row.get(7)?,
+            ai_model: row.get(8)?,
+            source: row.get(9)?,
+            version: row.get(10)?,
+            created_at: row.get(11)?,
+            updated_at: row.get(12)?,
+        })
+    })
+    .map_err(|e| format!("Failed to query artifacts: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Failed to collect artifacts: {}", e))?;
+    
+    Ok(artifacts)
+}
+
+#[tauri::command]
+pub fn get_artifacts_for_job(job_id: i64) -> Result<Vec<Artifact>, String> {
+    let conn = get_connection()
+        .map_err(|e| format!("Failed to get database connection: {}", e))?;
+    
+    let mut stmt = conn.prepare(
+        "SELECT id, application_id, job_id, type, title, content, format, ai_payload, ai_model, source, version, created_at, updated_at
+         FROM artifacts
+         WHERE job_id = ?
+         ORDER BY created_at DESC"
+    )
+    .map_err(|e| format!("Failed to prepare statement: {}", e))?;
+    
+    let artifacts = stmt.query_map([job_id], |row| {
+        Ok(Artifact {
+            id: row.get(0)?,
+            application_id: row.get(1)?,
+            job_id: row.get(2)?,
+            r#type: row.get(3)?,
+            title: row.get(4)?,
+            content: row.get(5)?,
+            format: row.get(6)?,
+            ai_payload: row.get(7)?,
+            ai_model: row.get(8)?,
+            source: row.get(9)?,
+            version: row.get(10)?,
+            created_at: row.get(11)?,
+            updated_at: row.get(12)?,
+        })
+    })
+    .map_err(|e| format!("Failed to query artifacts: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Failed to collect artifacts: {}", e))?;
+    
+    Ok(artifacts)
+}
+
+#[tauri::command]
+pub fn get_artifact(id: i64) -> Result<Artifact, String> {
+    let conn = get_connection()
+        .map_err(|e| format!("Failed to get database connection: {}", e))?;
+    
+    let artifact = conn.query_row(
+        "SELECT id, application_id, job_id, type, title, content, format, ai_payload, ai_model, source, version, created_at, updated_at
+         FROM artifacts
+         WHERE id = ?",
+        [id],
+        |row| {
+            Ok(Artifact {
+                id: row.get(0)?,
+                application_id: row.get(1)?,
+                job_id: row.get(2)?,
+                r#type: row.get(3)?,
+                title: row.get(4)?,
+                content: row.get(5)?,
+                format: row.get(6)?,
+                ai_payload: row.get(7)?,
+                ai_model: row.get(8)?,
+                source: row.get(9)?,
+                version: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        },
+    )
+    .map_err(|e| format!("Failed to get artifact: {}", e))?;
+    
+    Ok(artifact)
+}
+
+#[tauri::command]
+pub fn update_artifact(id: i64, content: String) -> Result<Artifact, String> {
+    let conn = get_connection()
+        .map_err(|e| format!("Failed to get database connection: {}", e))?;
+    
+    let now = chrono::Utc::now().to_rfc3339();
+    
+    conn.execute(
+        "UPDATE artifacts SET content = ?, updated_at = ? WHERE id = ?",
+        rusqlite::params![content, now, id],
+    )
+    .map_err(|e| format!("Failed to update artifact: {}", e))?;
+    
+    get_artifact(id)
 }
 

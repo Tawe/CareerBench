@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useNavigate } from "react-router-dom";
 import "./Jobs.css";
 
 interface JobSummary {
@@ -722,17 +723,30 @@ function GenerateResumeSheet({
     audience: "hiring_manager",
   });
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState<string>("");
   const [generatedResume, setGeneratedResume] = useState<any>(null);
   const [generatedLetter, setGeneratedLetter] = useState<any>(null);
   const [resumeContent, setResumeContent] = useState<string>("");
   const [letterContent, setLetterContent] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [aiSettings, setAiSettings] = useState<any>(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    // Load AI settings to show provider status
+    invoke("get_ai_settings")
+      .then((settings: any) => setAiSettings(settings))
+      .catch(() => {}); // Ignore errors, just don't show provider status
+  }, []);
 
   async function handleGenerate() {
     setIsGenerating(true);
     setError(null);
+    setGenerationProgress("");
+    
     try {
       if (artifactType === "resume" || artifactType === "both") {
+        setGenerationProgress("Generating resume...");
         const result = await invoke<any>("generate_resume_for_job", {
           jobId: jobId,
           applicationId: null,
@@ -744,9 +758,15 @@ function GenerateResumeSheet({
         });
         setGeneratedResume(result.resume);
         setResumeContent(result.content);
+        if (artifactType === "both") {
+          setGenerationProgress("Resume generated. Generating cover letter...");
+        }
       }
 
       if (artifactType === "cover_letter" || artifactType === "both") {
+        if (artifactType === "cover_letter") {
+          setGenerationProgress("Generating cover letter...");
+        }
         const result = await invoke<any>("generate_cover_letter_for_job", {
           jobId: jobId,
           applicationId: null,
@@ -758,9 +778,27 @@ function GenerateResumeSheet({
         });
         setGeneratedLetter(result.letter);
         setLetterContent(result.content);
+        setGenerationProgress("");
       }
     } catch (err: any) {
-      setError(err?.message || "Failed to generate");
+      const errorMessage = err?.message || "Failed to generate";
+      // Provide helpful error messages
+      if (errorMessage.includes("not yet implemented") || errorMessage.includes("Local model") || errorMessage.includes("model path not configured") || errorMessage.includes("Failed to resolve provider") || errorMessage.includes("requires") || errorMessage.includes("not set up") || errorMessage.includes("not configured")) {
+        setError(
+          "AI provider is not configured. Please configure your AI provider in Settings."
+        );
+      } else if (errorMessage.includes("API key") || errorMessage.includes("Invalid") || errorMessage.includes("not set up")) {
+        setError(
+          "AI provider is not set up. Please configure your AI provider in Settings."
+        );
+      } else if (errorMessage.includes("Network") || errorMessage.includes("connection")) {
+        setError(
+          "Network error. Please check your internet connection and try again."
+        );
+      } else {
+        setError(errorMessage);
+      }
+      setGenerationProgress("");
     } finally {
       setIsGenerating(false);
     }
@@ -777,6 +815,41 @@ function GenerateResumeSheet({
           </button>
         </div>
         <div className="sheet-body">
+          {error && (
+            <div className="error-banner" style={{ marginBottom: "1rem" }}>
+              {error}
+              {error.includes("Settings") && (
+                <div style={{ marginTop: "0.5rem" }}>
+                  <a
+                    href="#"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate("/settings");
+                    }}
+                    style={{ color: "inherit", textDecoration: "underline", cursor: "pointer" }}
+                  >
+                    Go to Settings →
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {aiSettings && (
+            <div className="provider-status" style={{ 
+              marginBottom: "1rem", 
+              padding: "0.75rem", 
+              backgroundColor: "#f0f9ff", 
+              borderRadius: "0.375rem",
+              fontSize: "0.875rem"
+            }}>
+              <strong>AI Provider:</strong>{" "}
+              {aiSettings.mode === "local" && "Local (Not yet available)"}
+              {aiSettings.mode === "cloud" && `Cloud (${aiSettings.cloudProvider || "OpenAI"})`}
+              {aiSettings.mode === "hybrid" && "Hybrid"}
+            </div>
+          )}
+
           {!generatedResume && !generatedLetter ? (
             <>
               <div className="generation-info">
@@ -784,6 +857,27 @@ function GenerateResumeSheet({
                   <strong>Job:</strong> {jobTitle} @ {company}
                 </p>
               </div>
+              
+              {isGenerating && generationProgress && (
+                <div className="generation-progress" style={{
+                  marginBottom: "1rem",
+                  padding: "1rem",
+                  backgroundColor: "#f9fafb",
+                  borderRadius: "0.375rem",
+                  textAlign: "center"
+                }}>
+                  <div style={{ marginBottom: "0.5rem" }}>{generationProgress}</div>
+                  <div className="loading-spinner" style={{
+                    display: "inline-block",
+                    width: "20px",
+                    height: "20px",
+                    border: "3px solid #e5e7eb",
+                    borderTopColor: "#6366f1",
+                    borderRadius: "50%",
+                    animation: "spin 0.8s linear infinite"
+                  }}></div>
+                </div>
+              )}
 
               <div className="form-grid">
                 <div className="form-group full-width">
@@ -860,11 +954,6 @@ function GenerateResumeSheet({
                 )}
               </div>
 
-              {error && (
-                <div className="error-banner">
-                  {error}
-                </div>
-              )}
             </>
           ) : (
             <div className="generated-content">
@@ -909,7 +998,7 @@ function GenerateResumeSheet({
                 disabled={isGenerating}
                 className="save-button"
               >
-                {isGenerating ? "Generating..." : "Generate"}
+                {isGenerating ? (generationProgress || "Generating...") : "Generate"}
               </button>
             </>
           ) : (

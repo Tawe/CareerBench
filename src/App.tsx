@@ -4,6 +4,7 @@ import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
 import Jobs from "./pages/Jobs";
 import Applications from "./pages/Applications";
+import Settings from "./pages/Settings";
 
 function App() {
   return (
@@ -14,6 +15,7 @@ function App() {
           <Route path="/profile" element={<Profile />} />
           <Route path="/jobs" element={<Jobs />} />
           <Route path="/applications" element={<Applications />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>
     </BrowserRouter>

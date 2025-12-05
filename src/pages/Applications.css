@@ -778,3 +778,120 @@
   border: 1px solid #f9fafb;
 }
 
+/* Artifacts Section */
+.artifacts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.artifact-item {
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.artifact-item:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.artifact-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.artifact-type-badge {
+  padding: 0.25rem 0.75rem;
+  background: #eef2ff;
+  color: #4338ca;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.artifact-title {
+  font-weight: 500;
+  color: #111827;
+}
+
+.artifact-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.875rem;
+  color: #6b7280;
+}
+
+.artifact-date,
+.artifact-model {
+  display: flex;
+  align-items: center;
+}
+
+/* Artifact View Sheet */
+.artifact-sheet {
+  max-width: 900px;
+}
+
+.artifact-meta-info {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+  background: #f9fafb;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  font-size: 0.875rem;
+}
+
+.artifact-meta-info > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.artifact-meta-info strong {
+  color: #6b7280;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.artifact-content-section {
+  margin-top: 1.5rem;
+}
+
+.artifact-content-textarea {
+  width: 100%;
+  padding: 1rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 400px;
+}
+
+.artifact-content-display {
+  padding: 1rem;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 600px;
+  overflow-y: auto;
+  color: #111827;
+}
+

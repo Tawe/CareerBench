@@ -356,6 +356,22 @@ export default function Applications() {
   );
 }
 
+interface Artifact {
+  id: number;
+  application_id?: number;
+  job_id?: number;
+  type: string;
+  title: string;
+  content?: string;
+  format?: string;
+  ai_payload?: string;
+  ai_model?: string;
+  source?: string;
+  version?: number;
+  created_at: string;
+  updated_at: string;
+}
+
 function ApplicationDetailView({
   detail,
   onUpdate,
@@ -367,10 +383,29 @@ function ApplicationDetailView({
   const [formData, setFormData] = useState<Application>(detail.application);
   const [isSaving, setIsSaving] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null);
+  const [isLoadingArtifacts, setIsLoadingArtifacts] = useState(false);
 
   useEffect(() => {
     setFormData(detail.application);
+    loadArtifacts();
   }, [detail]);
+
+  async function loadArtifacts() {
+    if (!detail.application.id) return;
+    setIsLoadingArtifacts(true);
+    try {
+      const result = await invoke<Artifact[]>("get_artifacts_for_application", {
+        application_id: detail.application.id,
+      });
+      setArtifacts(result);
+    } catch (err: any) {
+      console.error("Failed to load artifacts:", err);
+    } finally {
+      setIsLoadingArtifacts(false);
+    }
+  }
 
   async function saveApplication() {
     setIsSaving(true);
@@ -755,6 +790,43 @@ function ApplicationDetailView({
         </div>
 
         <div className="detail-section">
+          <div className="section-header-with-edit">
+            <h3>Artifacts</h3>
+          </div>
+          <hr className="section-divider" />
+          {isLoadingArtifacts ? (
+            <div className="empty-text">Loading artifacts...</div>
+          ) : artifacts.length === 0 ? (
+            <div className="empty-text">No artifacts yet. Generate a resume or cover letter from the job page.</div>
+          ) : (
+            <div className="artifacts-list">
+              {artifacts.map((artifact) => (
+                <div
+                  key={artifact.id}
+                  className="artifact-item"
+                  onClick={() => setSelectedArtifact(artifact)}
+                >
+                  <div className="artifact-header">
+                    <span className="artifact-type-badge">{artifact.type}</span>
+                    <span className="artifact-title">{artifact.title}</span>
+                  </div>
+                  <div className="artifact-meta">
+                    {artifact.created_at && (
+                      <span className="artifact-date">
+                        Created: {new Date(artifact.created_at).toLocaleDateString()}
+                      </span>
+                    )}
+                    {artifact.ai_model && (
+                      <span className="artifact-model">Model: {artifact.ai_model}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="detail-section">
           <div className="section-header">
             <h3>Timeline</h3>
             <button
@@ -802,7 +874,129 @@ function ApplicationDetailView({
           }}
         />
       )}
+
+      {selectedArtifact && (
+        <ArtifactViewSheet
+          artifact={selectedArtifact}
+          onClose={() => setSelectedArtifact(null)}
+          onUpdate={() => {
+            loadArtifacts();
+            onUpdate();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function ArtifactViewSheet({
+  artifact,
+  onClose,
+  onUpdate,
+}: {
+  artifact: Artifact;
+  onClose: () => void;
+  onUpdate: () => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [content, setContent] = useState(artifact.content || "");
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function saveArtifact() {
+    setIsSaving(true);
+    try {
+      await invoke<Artifact>("update_artifact", {
+        id: artifact.id,
+        content: content,
+      });
+      setIsEditing(false);
+      onUpdate();
+    } catch (err: any) {
+      alert(err?.message || "Failed to save artifact");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="sheet-overlay" onClick={onClose}></div>
+      <div className="sheet artifact-sheet">
+        <div className="sheet-header">
+          <h2>{artifact.title}</h2>
+          <button onClick={onClose} className="sheet-close-button">
+            ×
+          </button>
+        </div>
+        <div className="sheet-content">
+          <div className="artifact-meta-info">
+            <div>
+              <strong>Type:</strong> {artifact.type}
+            </div>
+            {artifact.ai_model && (
+              <div>
+                <strong>Model:</strong> {artifact.ai_model}
+              </div>
+            )}
+            {artifact.created_at && (
+              <div>
+                <strong>Created:</strong> {new Date(artifact.created_at).toLocaleString()}
+              </div>
+            )}
+            {artifact.updated_at && (
+              <div>
+                <strong>Updated:</strong> {new Date(artifact.updated_at).toLocaleString()}
+              </div>
+            )}
+          </div>
+          <div className="artifact-content-section">
+            <div className="section-header-with-edit">
+              <h3>Content</h3>
+              {!isEditing && (
+                <button
+                  className="section-edit-button"
+                  onClick={() => setIsEditing(true)}
+                  title="Edit"
+                >
+                  <span>✏️</span>
+                </button>
+              )}
+            </div>
+            <hr className="section-divider" />
+            {isEditing ? (
+              <textarea
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                rows={20}
+                className="artifact-content-textarea"
+              />
+            ) : (
+              <pre className="artifact-content-display">{content || "No content"}</pre>
+            )}
+          </div>
+        </div>
+        <div className="sheet-footer">
+          {isEditing ? (
+            <>
+              <button onClick={() => setIsEditing(false)} className="cancel-button">
+                Cancel
+              </button>
+              <button
+                onClick={saveArtifact}
+                disabled={isSaving}
+                className="save-button"
+              >
+                {isSaving ? "Saving..." : "Save"}
+              </button>
+            </>
+          ) : (
+            <button onClick={onClose} className="save-button">
+              Close
+            </button>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
