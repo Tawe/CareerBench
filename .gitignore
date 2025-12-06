@@ -83,3 +83,10 @@ temp/
 
 # Build artifacts
 target/
+
+# CareerBench application data
+.careerbench/
+*.db
+
+# Rust
+Cargo.lock

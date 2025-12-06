@@ -7,6 +7,7 @@ pub enum AiProviderError {
     InvalidResponse(String),
     RateLimitExceeded,
     InvalidApiKey,
+    #[allow(dead_code)]
     ModelNotFound,
     ValidationError(String),
     Unknown(String),

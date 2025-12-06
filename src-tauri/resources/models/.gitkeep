@@ -1,0 +1,4 @@
+# This directory will contain the bundled Phi-3-mini GGUF model
+# Place Phi-3-mini-4k-instruct-q4_k_m.gguf here before building
+# The model will be bundled with the app and extracted on first use
+

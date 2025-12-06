@@ -1,6 +1,10 @@
-use serde_json::{json, Value};
+use serde_json::Value;
+
+#[cfg(test)]
+use serde_json::json;
 
 /// Error type for AI client operations
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum AiError {
     NetworkError(String),
@@ -24,6 +28,7 @@ impl std::error::Error for AiError {}
 
 /// Trait for AI client implementations
 /// This abstraction allows us to swap between real and mock implementations
+#[allow(dead_code)]
 pub trait AiClient: Send + Sync {
     /// Generate structured JSON from a prompt
     /// Returns a serde_json::Value that should be deserialized into a specific struct
@@ -32,18 +37,20 @@ pub trait AiClient: Send + Sync {
 
 /// Real AI client implementation (for production)
 /// This would call an actual AI provider API
+#[allow(dead_code)]
 pub struct RealAiClient {
     // Add configuration fields as needed (API key, endpoint, etc.)
 }
 
 impl RealAiClient {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {}
     }
 }
 
 impl AiClient for RealAiClient {
-    fn generate_json(&self, prompt: &str) -> Result<Value, AiError> {
+    fn generate_json(&self, _prompt: &str) -> Result<Value, AiError> {
         // TODO: Implement actual AI provider call
         // For now, return an error to indicate it's not implemented
         Err(AiError::Unknown(
@@ -54,11 +61,13 @@ impl AiClient for RealAiClient {
 
 /// Mock AI client for testing
 /// Returns fixed responses based on test keys or purpose
+#[allow(dead_code)]
 pub struct MockAiClient {
     responses: std::collections::HashMap<String, Value>,
 }
 
 impl MockAiClient {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             responses: std::collections::HashMap::new(),
@@ -66,11 +75,13 @@ impl MockAiClient {
     }
 
     /// Register a response for a given test key
+    #[allow(dead_code)]
     pub fn register_response(&mut self, key: &str, response: Value) {
         self.responses.insert(key.to_string(), response);
     }
 
     /// Register a response based on prompt content (simple pattern matching)
+    #[allow(dead_code)]
     pub fn register_response_for_prompt(&mut self, prompt_pattern: &str, response: Value) {
         self.responses
             .insert(prompt_pattern.to_string(), response);

@@ -7,5 +7,6 @@ pub mod settings;
 pub mod resolver;
 pub mod llama_wrapper;
 
-pub use provider::AiProvider;
+// AiProvider trait is used internally by LocalProvider and CloudAiProvider
+// but not exported for external use (accessed via ResolvedProvider instead)
 

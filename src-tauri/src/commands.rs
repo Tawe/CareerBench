@@ -971,7 +971,6 @@ pub async fn parse_job_with_ai(job_id: i64) -> Result<ParsedJob, String> {
     use crate::ai_cache::{ai_cache_get, ai_cache_put, compute_input_hash, CACHE_TTL_JOB_PARSE_DAYS};
     use crate::ai::resolver::ResolvedProvider;
     use crate::ai::types::{JobParsingInput, JobMeta};
-    use crate::ai::settings::load_ai_settings;
     
     let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
     let now = Utc::now().to_rfc3339();
@@ -2029,6 +2028,7 @@ fn get_or_create_artifact(
 }
 
 // Placeholder AI generation functions
+#[allow(dead_code)]
 async fn generate_resume_with_ai(
     profile_data: &UserProfileData,
     _job: &Job,
@@ -2132,6 +2132,7 @@ async fn generate_resume_with_ai(
     })
 }
 
+#[allow(dead_code)]
 async fn generate_cover_letter_with_ai(
     profile_data: &UserProfileData,
     job: &Job,
@@ -2179,6 +2180,7 @@ async fn generate_cover_letter_with_ai(
     })
 }
 
+#[allow(dead_code)]
 fn format_date(date_str: &str) -> String {
     if date_str.len() >= 7 {
         // Format: YYYY-MM
@@ -2261,7 +2263,7 @@ pub fn render_letter_to_text(letter: &GeneratedLetter) -> String {
 
 use crate::ai::resolver::ResolvedProvider;
 use crate::ai::types::*;
-use crate::ai::settings::{AiSettings, load_ai_settings};
+use crate::ai::settings::AiSettings;
 
 #[tauri::command]
 pub async fn ai_resume_suggestions(input: ResumeInput) -> Result<ResumeSuggestions, String> {

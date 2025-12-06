@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::ffi::{CString, CStr};
-use std::os::raw::{c_char, c_int};
+use std::os::raw::c_char;
 
 // Import llama.cpp types and functions
 use llama_cpp_sys_3::{
@@ -16,8 +16,8 @@ use llama_cpp_sys_3::{
     llama_tokenize, llama_decode, llama_get_logits_ith, llama_n_vocab,
     llama_token_to_piece, llama_sample_token_greedy, llama_sample_softmax,
     llama_batch_get_one, llama_batch_free, llama_kv_cache_clear,
-    llama_token, llama_token_data, llama_token_data_array,
-    llama_token_eos, llama_token_bos,
+    llama_token_data, llama_token_data_array,
+    llama_token_eos,
 };
 
 /// Wrapper for llama.cpp model and context
