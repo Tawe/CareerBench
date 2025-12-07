@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::get_connection;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AiSettings {
     pub mode: AiMode,
     pub cloud_provider: Option<CloudProvider>,

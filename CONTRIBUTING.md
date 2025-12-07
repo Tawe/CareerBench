@@ -4,11 +4,12 @@ Thank you for your interest in contributing to CareerBench!
 
 ## Development Setup
 
-See [QUICKSTART.md](./QUICKSTART.md) for setup instructions.
+- **[Quick Start Guide](QUICKSTART.md)** - Quick setup instructions
+- **[Development Setup Guide](docs/development/setup.md)** - Detailed development environment setup
 
 ## Testing Requirements
 
-All code changes must include appropriate tests. See [docs/specs/testing/TESTING_GUIDE.md](./docs/specs/testing/TESTING_GUIDE.md) for details.
+All code changes must include appropriate tests. See the [Testing Guide](docs/development/testing.md) for details.
 
 ## AI-Assisted Development Guardrails
 
@@ -66,5 +67,7 @@ npm test
 2. Update documentation if needed
 3. Submit a pull request with a clear description
 
-For full testing specifications, see [docs/specs/testing/testing.md](./docs/specs/testing/testing.md).
+For full testing specifications, see:
+- [Testing Guide](docs/development/testing.md) - How to run tests
+- [Testing Specification](docs/specs/testing/testing.md) - Detailed testing requirements
 

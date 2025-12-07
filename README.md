@@ -20,6 +20,10 @@ A self-hosted, AI-powered desktop application for managing your job search, gene
 
 ## Getting Started
 
+### Quick Start
+
+See the [Quick Start Guide](QUICKSTART.md) for detailed setup instructions.
+
 ### Prerequisites
 
 - Node.js (v18 or later)
@@ -43,6 +47,15 @@ npm run tauri dev
 npm run tauri build
 ```
 
+For more details, see the [Development Setup Guide](docs/development/setup.md).
+
+## Documentation
+
+- **[Quick Start Guide](QUICKSTART.md)** - Get up and running quickly
+- **[Documentation Index](docs/README.md)** - Complete documentation
+- **[Contributing Guide](CONTRIBUTING.md)** - How to contribute
+- **[Troubleshooting](docs/guides/troubleshooting.md)** - Common issues and solutions
+
 ## Project Structure
 
 ```
@@ -55,10 +68,14 @@ CareerBench/
 │   ├── src/
 │   │   ├── main.rs         # Tauri app entry
 │   │   ├── db.rs           # Database setup and migrations
-│   │   ├── ai_cache.rs      # AI caching layer
-│   │   └── commands.rs      # Tauri commands
+│   │   ├── ai_cache.rs     # AI caching layer
+│   │   └── commands.rs     # Tauri commands
 │   └── Cargo.toml          # Rust dependencies
-└── specs/                  # Feature specifications
+├── docs/                   # Documentation
+│   ├── guides/            # User guides
+│   ├── development/       # Developer docs
+│   └── specs/            # Feature specifications
+└── scripts/                # Utility scripts
 ```
 
 ## Development Status

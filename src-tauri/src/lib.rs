@@ -4,4 +4,5 @@ pub mod ai_cache;
 pub mod ai_client;
 pub mod ai;
 pub mod commands;
+pub mod resume_generator;
 

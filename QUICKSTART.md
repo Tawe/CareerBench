@@ -80,34 +80,39 @@ The following modules have placeholder commands ready for implementation:
 ## 📝 Database Location
 
 The SQLite database is stored at:
-- Development: `.careerbench/careerbench.db` (in project root)
+- Development: `src-tauri/.careerbench/careerbench.db`
 - Production: App data directory (platform-specific)
+
+## 📚 Next Steps
+
+- **[Documentation Index](docs/README.md)** - Explore all documentation
+- **[Development Setup](docs/development/setup.md)** - Detailed development guide
+- **[Model Setup](docs/guides/model-setup.md)** - Setting up local AI models
+- **[Contributing](CONTRIBUTING.md)** - How to contribute
 
 ## 🐛 Troubleshooting
 
-### Build Errors
+For detailed troubleshooting, see the [Troubleshooting Guide](docs/guides/troubleshooting.md).
 
-If you encounter Rust compilation errors:
+### Quick Fixes
+
+**Build Errors:**
 ```bash
 cd src-tauri
 cargo clean
 cargo build
 ```
 
-### Frontend Issues
-
-If frontend doesn't load:
+**Frontend Issues:**
 ```bash
 rm -rf node_modules
 npm install
-npm run dev
+npm run tauri dev
 ```
 
-### Database Issues
-
-If database needs to be reset:
+**Database Issues:**
 ```bash
-rm -rf .careerbench
+rm -rf src-tauri/.careerbench
 # Restart the app - migrations will recreate the database
 ```
 

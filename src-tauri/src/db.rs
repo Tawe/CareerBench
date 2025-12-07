@@ -1,13 +1,18 @@
 use rusqlite::{Connection, Result};
 use std::path::PathBuf;
 
-pub fn get_db_path() -> PathBuf {
+/// Get the app data directory (where database, logs, and models are stored)
+pub fn get_app_data_dir() -> PathBuf {
     // For now, use a local path. In production, use tauri::path::app_data_dir
     let app_data_dir = std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(".careerbench");
     std::fs::create_dir_all(&app_data_dir).expect("Failed to create app data directory");
-    app_data_dir.join("careerbench.db")
+    app_data_dir
+}
+
+pub fn get_db_path() -> PathBuf {
+    get_app_data_dir().join("careerbench.db")
 }
 
 pub fn get_connection() -> Result<Connection> {

@@ -730,14 +730,39 @@ function GenerateResumeSheet({
   const [letterContent, setLetterContent] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [aiSettings, setAiSettings] = useState<any>(null);
+  const [isLocalAvailable, setIsLocalAvailable] = useState<boolean>(false);
+  const [resumeName, setResumeName] = useState<string>("");
+  const [letterName, setLetterName] = useState<string>("");
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [savedArtifacts, setSavedArtifacts] = useState<any[]>([]);
   const navigate = useNavigate();
 
   useEffect(() => {
     // Load AI settings to show provider status
     invoke("get_ai_settings")
-      .then((settings: any) => setAiSettings(settings))
+      .then((settings: any) => {
+        setAiSettings(settings);
+        // Check if local provider is available
+        if (settings?.mode === "local") {
+          invoke<boolean>("check_local_provider_availability")
+            .then((available) => setIsLocalAvailable(available))
+            .catch(() => setIsLocalAvailable(false));
+        }
+      })
       .catch(() => {}); // Ignore errors, just don't show provider status
-  }, []);
+    
+    // Load saved artifacts for this job
+    loadSavedArtifacts();
+  }, [jobId]);
+
+  async function loadSavedArtifacts() {
+    try {
+      const artifacts = await invoke<any[]>("get_artifacts_for_job", { jobId });
+      setSavedArtifacts(artifacts || []);
+    } catch (err) {
+      console.error("Failed to load artifacts:", err);
+    }
+  }
 
   async function handleGenerate() {
     setIsGenerating(true);
@@ -758,6 +783,9 @@ function GenerateResumeSheet({
         });
         setGeneratedResume(result.resume);
         setResumeContent(result.content);
+        // Set default resume name
+        const defaultResumeName = `${jobTitle} @ ${company} - ${new Date().toLocaleDateString()}`;
+        setResumeName(defaultResumeName);
         if (artifactType === "both") {
           setGenerationProgress("Resume generated. Generating cover letter...");
         }
@@ -778,6 +806,9 @@ function GenerateResumeSheet({
         });
         setGeneratedLetter(result.letter);
         setLetterContent(result.content);
+        // Set default letter name
+        const defaultLetterName = `Cover Letter - ${jobTitle} @ ${company} - ${new Date().toLocaleDateString()}`;
+        setLetterName(defaultLetterName);
         setGenerationProgress("");
       }
     } catch (err: any) {
@@ -802,6 +833,74 @@ function GenerateResumeSheet({
     } finally {
       setIsGenerating(false);
     }
+  }
+
+  async function handleSaveResume() {
+    if (!generatedResume || !resumeName.trim()) {
+      setError("Please enter a name for the resume");
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      await invoke("save_resume", {
+        jobId: jobId,
+        applicationId: null,
+        resume: generatedResume,
+        title: resumeName.trim(),
+      });
+      
+      // Reload artifacts and reset state
+      await loadSavedArtifacts();
+      setGeneratedResume(null);
+      setResumeContent("");
+      setResumeName("");
+    } catch (err: any) {
+      setError(err?.message || "Failed to save resume");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleSaveLetter() {
+    if (!generatedLetter || !letterName.trim()) {
+      setError("Please enter a name for the cover letter");
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      await invoke("save_cover_letter", {
+        jobId: jobId,
+        applicationId: null,
+        letter: generatedLetter,
+        title: letterName.trim(),
+      });
+      
+      // Reload artifacts and reset state
+      await loadSavedArtifacts();
+      setGeneratedLetter(null);
+      setLetterContent("");
+      setLetterName("");
+    } catch (err: any) {
+      setError(err?.message || "Failed to save cover letter");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function handleDiscard() {
+    setGeneratedResume(null);
+    setGeneratedLetter(null);
+    setResumeContent("");
+    setLetterContent("");
+    setResumeName("");
+    setLetterName("");
+    setError(null);
   }
 
   return (
@@ -844,7 +943,13 @@ function GenerateResumeSheet({
               fontSize: "0.875rem"
             }}>
               <strong>AI Provider:</strong>{" "}
-              {aiSettings.mode === "local" && "Local (Not yet available)"}
+              {aiSettings.mode === "local" && (
+                isLocalAvailable 
+                  ? "Local (Ready)" 
+                  : aiSettings.localModelPath 
+                    ? "Local (Model file not found)" 
+                    : "Local (Model path not configured)"
+              )}
               {aiSettings.mode === "cloud" && `Cloud (${aiSettings.cloudProvider || "OpenAI"})`}
               {aiSettings.mode === "hybrid" && "Hybrid"}
             </div>
@@ -958,10 +1063,10 @@ function GenerateResumeSheet({
           ) : (
             <div className="generated-content">
               {generatedResume && (
-                <div className="artifact-preview">
+                <div className="artifact-preview" style={{ marginBottom: "1.5rem" }}>
                   <h3>Generated Resume</h3>
                   {generatedResume.highlights && generatedResume.highlights.length > 0 && (
-                    <div className="highlights">
+                    <div className="highlights" style={{ marginBottom: "1rem" }}>
                       <strong>Highlights:</strong>
                       <ul>
                         {generatedResume.highlights.map((h: string, i: number) => (
@@ -970,17 +1075,79 @@ function GenerateResumeSheet({
                       </ul>
                     </div>
                   )}
-                  <div className="content-preview">
-                    <pre>{resumeContent}</pre>
+                  <div className="form-group" style={{ marginBottom: "1rem" }}>
+                    <label>Resume Name</label>
+                    <input
+                      type="text"
+                      value={resumeName}
+                      onChange={(e) => setResumeName(e.target.value)}
+                      placeholder="Enter a name for this resume"
+                      style={{ width: "100%", padding: "0.5rem" }}
+                    />
+                  </div>
+                  <div className="content-preview" style={{ 
+                    maxHeight: "400px", 
+                    overflow: "auto",
+                    backgroundColor: "#f9fafb",
+                    padding: "1rem",
+                    borderRadius: "0.375rem",
+                    marginBottom: "1rem"
+                  }}>
+                    <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{resumeContent}</pre>
                   </div>
                 </div>
               )}
 
               {generatedLetter && (
-                <div className="artifact-preview">
+                <div className="artifact-preview" style={{ marginBottom: "1.5rem" }}>
                   <h3>Generated Cover Letter</h3>
-                  <div className="content-preview">
-                    <pre>{letterContent}</pre>
+                  <div className="form-group" style={{ marginBottom: "1rem" }}>
+                    <label>Cover Letter Name</label>
+                    <input
+                      type="text"
+                      value={letterName}
+                      onChange={(e) => setLetterName(e.target.value)}
+                      placeholder="Enter a name for this cover letter"
+                      style={{ width: "100%", padding: "0.5rem" }}
+                    />
+                  </div>
+                  <div className="content-preview" style={{ 
+                    maxHeight: "400px", 
+                    overflow: "auto",
+                    backgroundColor: "#f9fafb",
+                    padding: "1rem",
+                    borderRadius: "0.375rem",
+                    marginBottom: "1rem"
+                  }}>
+                    <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{letterContent}</pre>
+                  </div>
+                </div>
+              )}
+
+              {savedArtifacts.length > 0 && (
+                <div style={{ marginTop: "2rem", paddingTop: "1.5rem", borderTop: "1px solid #e5e7eb" }}>
+                  <h4 style={{ marginBottom: "1rem" }}>Saved Resumes & Cover Letters</h4>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    {savedArtifacts.map((artifact) => (
+                      <div 
+                        key={artifact.id} 
+                        style={{ 
+                          padding: "0.75rem", 
+                          backgroundColor: "#f9fafb", 
+                          borderRadius: "0.375rem",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center"
+                        }}
+                      >
+                        <div>
+                          <strong>{artifact.title}</strong>
+                          <div style={{ fontSize: "0.875rem", color: "#6b7280", marginTop: "0.25rem" }}>
+                            {artifact.type} • {new Date(artifact.created_at).toLocaleDateString()}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -1002,9 +1169,35 @@ function GenerateResumeSheet({
               </button>
             </>
           ) : (
-            <button onClick={onClose} className="save-button">
-              Close
-            </button>
+            <>
+              <button 
+                onClick={handleDiscard} 
+                className="cancel-button"
+                disabled={isSaving}
+              >
+                Discard
+              </button>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                {generatedResume && (
+                  <button
+                    onClick={handleSaveResume}
+                    disabled={isSaving || !resumeName.trim()}
+                    className="save-button"
+                  >
+                    {isSaving ? "Saving..." : "Save Resume"}
+                  </button>
+                )}
+                {generatedLetter && (
+                  <button
+                    onClick={handleSaveLetter}
+                    disabled={isSaving || !letterName.trim()}
+                    className="save-button"
+                  >
+                    {isSaving ? "Saving..." : "Save Letter"}
+                  </button>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>

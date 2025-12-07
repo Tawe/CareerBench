@@ -57,7 +57,7 @@ These fixtures serve as:
 ### 4. Documentation
 
 #### Created Guides
-- ✅ `docs/specs/testing/TESTING_GUIDE.md` - How to run tests and add new tests
+- ✅ `docs/specs/testing/testing-guide.md` - How to run tests and add new tests
 - ✅ `CONTRIBUTING.md` - AI guardrail rules and contribution guidelines
 
 ## 📋 Test Coverage Status

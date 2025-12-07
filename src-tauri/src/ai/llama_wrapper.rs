@@ -15,7 +15,7 @@ use llama_cpp_sys_3::{
     llama_context_default_params, llama_new_context_with_model, llama_context, llama_free,
     llama_tokenize, llama_decode, llama_get_logits_ith, llama_n_vocab,
     llama_token_to_piece, llama_sample_token_greedy, llama_sample_softmax,
-    llama_batch_get_one, llama_batch_free, llama_kv_cache_clear,
+    llama_batch_get_one, llama_kv_cache_clear,
     llama_token_data, llama_token_data_array,
     llama_token_eos,
 };
@@ -46,8 +46,10 @@ impl LlamaModel {
         // Run in blocking thread since llama.cpp is synchronous
         let (model_ptr, ctx_ptr) = tokio::task::spawn_blocking(move || {
             unsafe {
+                log::info!("[llama_wrapper] Initializing llama backend...");
                 // Initialize backend (thread-safe, can be called multiple times)
                 llama_backend_init();
+                log::info!("[llama_wrapper] Backend initialized");
 
                 // Convert path to C string
                 let path_str = path_for_closure.to_str()
@@ -60,14 +62,17 @@ impl LlamaModel {
                 model_params.n_gpu_layers = 0; // CPU only for now (can be configured later)
 
                 // Load model
+                log::info!("[llama_wrapper] Loading model from: {}", path_str);
                 let model = llama_load_model_from_file(
                     c_path.as_ptr(),
                     model_params
                 );
 
                 if model.is_null() {
+                    log::error!("[llama_wrapper] Failed to load model from: {}", path_str);
                     return Err(AiProviderError::Unknown("Failed to load model. Check that the file is a valid GGUF model.".to_string()));
                 }
+                log::info!("[llama_wrapper] Model loaded successfully");
 
                 // Set up context parameters
                 let mut ctx_params = llama_context_default_params();
@@ -76,12 +81,16 @@ impl LlamaModel {
                 ctx_params.n_threads_batch = num_cpus::get() as u32;
 
                 // Create context
+                log::info!("[llama_wrapper] Creating context: n_ctx={}, n_threads={}, n_threads_batch={}", 
+                    ctx_params.n_ctx, ctx_params.n_threads, ctx_params.n_threads_batch);
                 let ctx = llama_new_context_with_model(model, ctx_params);
 
                 if ctx.is_null() {
+                    log::error!("[llama_wrapper] Failed to create context");
                     llama_free_model(model);
                     return Err(AiProviderError::Unknown("Failed to create context".to_string()));
                 }
+                log::info!("[llama_wrapper] Context created successfully");
 
                 // Convert pointers to usize for thread safety (just copying addresses)
                 Ok((model as usize, ctx as usize))
@@ -121,6 +130,7 @@ impl LlamaModel {
                     .map_err(|e| AiProviderError::Unknown(format!("Failed to create C string: {}", e)))?;
 
                 // Tokenize prompt
+                log::info!("[llama_wrapper] Tokenizing prompt (length: {} chars)", prompt.len());
                 // Allocate buffer (estimate: prompt length / 2, minimum 512)
                 let max_tokens_for_prompt = (prompt.len() / 2).max(512).min(4096);
                 let mut tokens = vec![0i32; max_tokens_for_prompt];
@@ -134,10 +144,12 @@ impl LlamaModel {
                     true,  // add_special (add BOS token)
                     false, // parse_special
                 );
+                log::debug!("[llama_wrapper] Tokenize returned: {} (buffer size: {})", token_count, tokens.len());
 
                 if token_count < 0 {
                     // Buffer was too small, try with larger buffer
                     let needed_size = (-token_count) as usize;
+                    log::debug!("[llama_wrapper] Token buffer too small, resizing to {}", needed_size);
                     tokens.resize(needed_size, 0);
                     let retry_count = llama_tokenize(
                         model,
@@ -149,14 +161,18 @@ impl LlamaModel {
                         false,
                     );
                     if retry_count < 0 {
+                        log::error!("[llama_wrapper] Failed to tokenize prompt even with larger buffer (size: {})", tokens.len());
                         return Err(AiProviderError::Unknown("Failed to tokenize prompt even with larger buffer".to_string()));
                     }
                     tokens.truncate(retry_count as usize);
+                    log::info!("[llama_wrapper] Tokenized prompt: {} tokens", retry_count);
                 } else {
                     tokens.truncate(token_count as usize);
+                    log::info!("[llama_wrapper] Tokenized prompt: {} tokens", token_count);
                 }
 
                 if tokens.is_empty() {
+                    log::error!("[llama_wrapper] Prompt tokenized to empty sequence");
                     return Err(AiProviderError::Unknown("Prompt tokenized to empty sequence".to_string()));
                 }
 
@@ -168,20 +184,62 @@ impl LlamaModel {
                     0, // seq_id
                 );
 
+                // Set logits flag for the last token (we need logits to generate the next token)
+                // llama_batch_get_one() doesn't initialize logits array, so we need to allocate it
+                if batch.logits.is_null() {
+                    let logits_size = batch.n_tokens as usize;
+                    let logits_vec: Vec<i8> = vec![0; logits_size];
+                    let logits_box = Box::into_raw(logits_vec.into_boxed_slice());
+                    batch.logits = logits_box as *mut i8;
+                    log::debug!("[llama_wrapper] Allocated logits array for {} tokens", logits_size);
+                }
+                // Set flag for last token to compute logits
+                if batch.n_tokens > 0 {
+                    let last_idx = (batch.n_tokens - 1) as usize;
+                    // Already in unsafe block, can access raw pointer directly
+                    *batch.logits.add(last_idx) = 1;
+                    log::debug!("[llama_wrapper] Set logits flag for last prompt token (index {})", last_idx);
+                }
+
                 // Decode the prompt
+                log::debug!("[llama_wrapper] Decoding prompt with {} tokens", tokens.len());
                 if llama_decode(ctx, batch) != 0 {
-                    llama_batch_free(batch);
+                    log::error!("[llama_wrapper] Failed to decode prompt");
+                    // Don't free batch from llama_batch_get_one() - it's stack-allocated
+                    // But we should free the logits array we allocated
+                    if !batch.logits.is_null() {
+                        let _ = Box::from_raw(std::slice::from_raw_parts_mut(batch.logits, batch.n_tokens as usize));
+                    }
                     return Err(AiProviderError::Unknown("Failed to decode prompt".to_string()));
                 }
+                log::debug!("[llama_wrapper] Prompt decoded successfully. Batch has {} tokens", batch.n_tokens);
 
                 // Generate tokens
                 let mut output = String::new();
                 let n_vocab = llama_n_vocab(model);
                 let eos_token = llama_token_eos(model);
+                log::info!("[llama_wrapper] Starting token generation: n_vocab={}, eos_token={}, max_tokens={}", n_vocab, eos_token, max_tokens);
 
-                for _ in 0..max_tokens {
-                    // Get logits for last token
-                    let logits_ptr = llama_get_logits_ith(ctx, (batch.n_tokens - 1) as i32);
+                // Track current position in sequence
+                let mut current_pos = batch.n_tokens as i32;
+
+                for _token_idx in 0..max_tokens {
+                    // Validate batch state before accessing logits
+                    if batch.n_tokens == 0 {
+                        log::error!("[llama_wrapper] Batch has 0 tokens, cannot get logits");
+                        return Err(AiProviderError::Unknown("Batch has 0 tokens".to_string()));
+                    }
+
+                    // Get logits for last token (batch.n_tokens - 1)
+                    let logits_idx = (batch.n_tokens - 1) as i32;
+                    log::debug!("[llama_wrapper] Getting logits for token at index {} (batch.n_tokens={})", logits_idx, batch.n_tokens);
+                    
+                    let logits_ptr = llama_get_logits_ith(ctx, logits_idx);
+                    if logits_ptr.is_null() {
+                        log::error!("[llama_wrapper] Logits pointer is null for index {}", logits_idx);
+                        return Err(AiProviderError::Unknown(format!("Logits pointer is null for token index {}", logits_idx)));
+                    }
+                    
                     let logits = std::slice::from_raw_parts(logits_ptr, n_vocab as usize);
 
                     // Create token data array for sampling
@@ -211,9 +269,11 @@ impl LlamaModel {
 
                     // Sample next token (greedy for deterministic JSON)
                     let next_token = llama_sample_token_greedy(ctx, &mut candidates_array);
+                    log::debug!("[llama_wrapper] Generated token {} at position {}", next_token, current_pos);
 
                     // Check for EOS token
                     if next_token == eos_token {
+                        log::info!("[llama_wrapper] EOS token reached, stopping generation");
                         break;
                     }
 
@@ -241,23 +301,50 @@ impl LlamaModel {
                     }
 
                     // Prepare next batch (single token)
-                    llama_batch_free(batch);
+                    // Note: Don't free batch from llama_batch_get_one() - it's stack-allocated
+                    // But we should free the logits array we allocated for the previous batch
+                    if !batch.logits.is_null() {
+                        // Intentionally leak - batch wasn't allocated with llama_batch_init()
+                        // Freeing it would cause crashes. Small memory leak is acceptable.
+                        log::debug!("[llama_wrapper] Not freeing logits array (intentional leak for stability)");
+                    }
+                    
+                    // We'll create a new batch for the next token
                     let mut next_token_for_batch = next_token;
+                    current_pos += 1;
                     batch = llama_batch_get_one(
                         &mut next_token_for_batch,
                         1, // n_tokens
-                        batch.n_tokens, // pos_0 (continue from where we left off)
+                        current_pos, // pos_0 (continue from where we left off)
                         0, // seq_id
                     );
 
+                    // Set logits flag for this token (we need logits to generate the next token)
+                    if batch.logits.is_null() {
+                        let logits_size = batch.n_tokens as usize;
+                        let logits_vec: Vec<i8> = vec![0; logits_size];
+                        let logits_box = Box::into_raw(logits_vec.into_boxed_slice());
+                        batch.logits = logits_box as *mut i8;
+                        log::debug!("[llama_wrapper] Allocated logits array for generated token");
+                    }
+                    // Set flag for the token to compute logits
+                    if batch.n_tokens > 0 {
+                        // Already in unsafe block, can access raw pointer directly
+                        *batch.logits = 1;
+                        log::debug!("[llama_wrapper] Set logits flag for generated token");
+                    }
+
+                    log::debug!("[llama_wrapper] Decoding next token at position {}", current_pos);
                     // Decode next token
                     if llama_decode(ctx, batch) != 0 {
-                        llama_batch_free(batch);
+                        log::warn!("[llama_wrapper] Failed to decode token at position {}, stopping generation", current_pos);
+                        // Don't free batch from llama_batch_get_one()
                         break;
                     }
                 }
 
-                llama_batch_free(batch);
+                log::info!("[llama_wrapper] Generation completed. Output length: {} chars", output.len());
+                // Don't free batch from llama_batch_get_one() - it's stack-allocated
                 Ok(output)
             }
         }).await

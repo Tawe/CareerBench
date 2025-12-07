@@ -6,14 +6,24 @@ mod ai_cache;
 mod ai_client;
 mod ai;
 mod commands;
+mod resume_generator;
+mod logging;
 
 use db::init_database;
 
 #[tokio::main]
 async fn main() {
+    // Initialize logging first (before any other operations)
+    logging::init_logging();
+    logging::setup_panic_hook();
+    log::info!("CareerBench starting up...");
+    
     // Initialize database
     if let Err(e) = init_database() {
+        log::error!("Failed to initialize database: {}", e);
         eprintln!("Failed to initialize database: {}", e);
+    } else {
+        log::info!("Database initialized successfully");
     }
 
     tauri::Builder::default()
@@ -41,10 +51,14 @@ async fn main() {
             commands::get_ai_settings,
             commands::save_ai_settings,
             commands::test_ai_connection,
+            commands::check_local_provider_availability,
             commands::get_artifacts_for_application,
             commands::get_artifacts_for_job,
             commands::get_artifact,
             commands::update_artifact,
+            commands::update_artifact_title,
+            commands::save_resume,
+            commands::save_cover_letter,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

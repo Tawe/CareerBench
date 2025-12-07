@@ -29,9 +29,9 @@ The local model integration architecture is **fully implemented and ready**. The
 - Code compiles without errors
 
 ### 4. Documentation ✅
-- `MODEL_RECOMMENDATION.md` - Model and library recommendations
-- `LOCAL_MODEL_IMPLEMENTATION.md` - Implementation guide
-- `IMPLEMENTATION_NOTES.md` - Library evaluation notes
+- `model-recommendation.md` - Model and library recommendations
+- `local-model-implementation.md` - Implementation guide
+- `implementation-notes.md` - Library evaluation notes
 - Inline code documentation
 
 ## What Remains

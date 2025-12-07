@@ -262,7 +262,7 @@ pub struct UserProfile {
     pub updated_at: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Experience {
     pub id: Option<i64>,
     pub company: String,
@@ -1630,24 +1630,23 @@ pub struct GenerationOptions {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResumeGenerationResult {
     pub resume: GeneratedResume,
-    pub artifact_id: i64,
     pub content: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LetterGenerationResult {
     pub letter: GeneratedLetter,
-    pub artifact_id: i64,
     pub content: String,
 }
 
 #[tauri::command]
 pub async fn generate_resume_for_job(
     job_id: i64,
-    application_id: Option<i64>,
+    _application_id: Option<i64>,
     options: Option<GenerationOptions>,
 ) -> Result<ResumeGenerationResult, String> {
     use crate::ai_cache::{ai_cache_get, ai_cache_put, compute_input_hash, CACHE_TTL_RESUME_DAYS};
+    use crate::resume_generator::*;
     
     let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
     let now = Utc::now().to_rfc3339();
@@ -1660,24 +1659,30 @@ pub async fn generate_resume_for_job(
 
     // Load job
     let job = get_job_detail(job_id).await?;
+    let job_description = job.raw_description.as_deref().unwrap_or("");
 
-    // Build canonical request payload
+    // Parse job if not already parsed
+    let parsed_job = if let Some(parsed_json) = &job.parsed_json {
+        serde_json::from_str::<ParsedJob>(parsed_json).ok()
+    } else {
+        None
+    };
+
+    // Build canonical request payload for final resume cache
     let request_payload = serde_json::json!({
         "userProfile": profile_data.profile,
         "experience": profile_data.experience,
         "skills": profile_data.skills,
         "education": profile_data.education,
-        "portfolio": profile_data.portfolio,
         "job": {
             "title": job.title,
             "company": job.company,
             "rawDescription": job.raw_description,
-            "parsedJson": job.parsed_json
         },
         "options": options
     });
 
-    // Check cache
+    // Check final resume cache
     let input_hash = compute_input_hash(&request_payload)
         .map_err(|e| format!("Failed to compute hash: {}", e))?;
 
@@ -1687,89 +1692,137 @@ pub async fn generate_resume_for_job(
             .map_err(|e| format!("Failed to deserialize cached response: {}", e))?;
         
         let content = render_resume_to_text(&resume);
-        let artifact_id = get_or_create_artifact(
-            &conn,
-            application_id,
-            Some(job_id),
-            "Resume",
-            &content,
-            &serde_json::to_string(&resume).unwrap(),
-            &now,
-        )?;
 
         return Ok(ResumeGenerationResult {
             resume,
-            artifact_id,
             content,
         });
     }
 
-    // Cache miss - generate resume using AI provider
-    let provider = ResolvedProvider::resolve()
-        .map_err(|e| format!("Failed to resolve provider: {}", e))?;
+    // ============================================================================
+    // NEW PIPELINE: Small, focused AI calls + code-based preprocessing
+    // ============================================================================
+
+    // Step 1: Summarize job description (small AI call, cached)
+    let jd_summary = summarize_job_description(job_description, parsed_job.as_ref()).await?;
+
+    // Step 2: Preprocess and select relevant roles/bullets (code-based, no AI)
+    let top_roles = select_top_roles(&profile_data.experience, &jd_summary, 3);
     
-    // Build profile data JSON for AI provider
-    let profile_json = serde_json::json!({
-        "profile": profile_data.profile,
-        "experience": profile_data.experience,
-        "skills": profile_data.skills,
-        "education": profile_data.education,
-        "certifications": profile_data.certifications,
-        "portfolio": profile_data.portfolio,
-    });
+    // Step 3: Select top bullets for each role and rewrite them (small AI calls per role)
+    let mut experience_sections = Vec::new();
+    for mapped_role in &top_roles {
+        // Select top bullets for this role
+        let selected_bullets = select_top_bullets_for_role(&mapped_role.experience, &jd_summary, 5);
+        
+        // Rewrite bullets (small AI call per role)
+        let rewritten_bullets = rewrite_bullets_for_role(
+            &mapped_role.experience.title,
+            &mapped_role.experience.company,
+            &selected_bullets,
+            &jd_summary,
+        ).await?;
+        
+        // Build subheading with dates and location
+        let mut subheading = String::new();
+        if let Some(start) = &mapped_role.experience.start_date {
+            subheading.push_str(&crate::commands::format_date(start));
+        }
+        if mapped_role.experience.is_current {
+            subheading.push_str(" – Present");
+        } else if let Some(end) = &mapped_role.experience.end_date {
+            subheading.push_str(&format!(" – {}", crate::commands::format_date(end)));
+        }
+        if let Some(loc) = &mapped_role.experience.location {
+            subheading.push_str(&format!(" | {}", loc));
+        }
+        
+        // Create section item with rewritten bullets
+        let bullets: Vec<String> = rewritten_bullets.iter()
+            .map(|b| b.new_text.clone())
+            .collect();
+        
+        experience_sections.push(ResumeSectionItem {
+            heading: format!("{} – {}", mapped_role.experience.title, mapped_role.experience.company),
+            subheading: if subheading.is_empty() { None } else { Some(subheading) },
+            bullets,
+        });
+    }
+
+    // Step 4: Generate professional summary (optional small AI call, cached)
+    let summary = generate_professional_summary(&profile_data, &jd_summary).await?;
+
+    // Step 5: Select top skills (code-based, no AI)
+    let top_skills = select_top_skills(&profile_data.skills, &jd_summary, 10);
+
+    // Step 6: Assemble final resume in code (no AI)
+    let mut sections = Vec::new();
     
-    // Build job description
-    let job_description = job.raw_description
-        .as_deref()
-        .unwrap_or("")
-        .to_string();
+    // Experience section
+    if !experience_sections.is_empty() {
+        sections.push(ResumeSection {
+            title: "Experience".to_string(),
+            items: experience_sections,
+        });
+    }
     
-    // Convert GenerationOptions to ResumeOptions
-    let resume_options = options.as_ref().map(|opt| crate::ai::types::ResumeOptions {
-        tone: opt.tone.clone(),
-        length: opt.length.clone(),
-        focus: opt.focus.clone(),
-    });
+    // Skills section
+    if !top_skills.is_empty() {
+        sections.push(ResumeSection {
+            title: "Skills".to_string(),
+            items: vec![ResumeSectionItem {
+                heading: "Key Skills".to_string(),
+                subheading: None,
+                bullets: vec![top_skills.join(", ")],
+            }],
+        });
+    }
     
-    // Call AI provider
-    let resume_input = crate::ai::types::ResumeInput {
-        profile_data: profile_json,
-        job_description,
-        options: resume_options,
+    // Education section (raw from user, no AI)
+    if !profile_data.education.is_empty() {
+        let mut edu_items = Vec::new();
+        for edu in &profile_data.education {
+            let mut heading = edu.institution.clone();
+            if let Some(degree) = &edu.degree {
+                heading.push_str(&format!(" – {}", degree));
+            }
+            edu_items.push(ResumeSectionItem {
+                heading,
+                subheading: None,
+                bullets: Vec::new(),
+            });
+        }
+        sections.push(ResumeSection {
+            title: "Education".to_string(),
+            items: edu_items,
+        });
+    }
+    
+    // Build headline
+    let headline = if let Some(profile) = &profile_data.profile {
+        if let Some(title) = &profile.current_role_title {
+            format!("{} – {}", profile.full_name, title)
+        } else {
+            profile.full_name.clone()
+        }
+    } else {
+        "Professional Resume".to_string()
     };
     
-    let resume_suggestions = provider.as_provider()
-        .generate_resume_suggestions(resume_input)
-        .await
-        .map_err(|e| format!("AI generation failed: {}", e))?;
-    
-    // Convert ResumeSuggestions to GeneratedResume
-    // Convert sections from ai::types::ResumeSection to commands::ResumeSection
-    let sections: Vec<ResumeSection> = resume_suggestions.sections.into_iter().map(|s| {
-        ResumeSection {
-            title: s.title,
-            items: s.items.into_iter().map(|item| {
-                ResumeSectionItem {
-                    heading: item.heading,
-                    subheading: item.subheading,
-                    bullets: item.bullets,
-                }
-            }).collect(),
-        }
-    }).collect();
-    
     let resume = GeneratedResume {
-        summary: resume_suggestions.summary,
-        headline: resume_suggestions.headline,
+        summary: Some(summary),
+        headline: Some(headline),
         sections,
-        highlights: resume_suggestions.highlights,
+        highlights: vec![
+            format!("Tailored for {} role", jd_summary.role_title.as_deref().unwrap_or("this position")),
+            format!("Emphasizes: {}", jd_summary.must_have_skills.join(", ")),
+        ],
     };
 
     // Store in cache
     let response_payload = serde_json::to_value(&resume)
         .map_err(|e| format!("Failed to serialize resume: {}", e))?;
     
-    // Get model name from settings for cache
     let model_name = crate::ai::settings::load_ai_settings()
         .ok()
         .and_then(|s| s.model_name)
@@ -1787,21 +1840,11 @@ pub async fn generate_resume_for_job(
     )
     .map_err(|e| format!("Failed to cache result: {}", e))?;
 
-    // Create artifact
+    // Don't create artifact automatically - user will save it if they want
     let content = render_resume_to_text(&resume);
-    let artifact_id = get_or_create_artifact(
-        &conn,
-        application_id,
-        Some(job_id),
-        "Resume",
-        &content,
-        &serde_json::to_string(&resume).unwrap(),
-        &now,
-    )?;
 
     Ok(ResumeGenerationResult {
         resume,
-        artifact_id,
         content,
     })
 }
@@ -1809,7 +1852,7 @@ pub async fn generate_resume_for_job(
 #[tauri::command]
 pub async fn generate_cover_letter_for_job(
     job_id: i64,
-    application_id: Option<i64>,
+    _application_id: Option<i64>,
     options: Option<GenerationOptions>,
 ) -> Result<LetterGenerationResult, String> {
     use crate::ai_cache::{ai_cache_get, ai_cache_put, compute_input_hash, CACHE_TTL_COVER_LETTER_DAYS};
@@ -1850,19 +1893,9 @@ pub async fn generate_cover_letter_for_job(
             .map_err(|e| format!("Failed to deserialize cached response: {}", e))?;
         
         let content = render_letter_to_text(&letter);
-        let artifact_id = get_or_create_artifact(
-            &conn,
-            application_id,
-            Some(job_id),
-            "CoverLetter",
-            &content,
-            &serde_json::to_string(&letter).unwrap(),
-            &now,
-        )?;
 
         return Ok(LetterGenerationResult {
             letter,
-            artifact_id,
             content,
         });
     }
@@ -1936,75 +1969,31 @@ pub async fn generate_cover_letter_for_job(
     )
     .map_err(|e| format!("Failed to cache result: {}", e))?;
 
-    // Create artifact
+    // Don't create artifact automatically - user will save it if they want
     let content = render_letter_to_text(&letter);
-    let artifact_id = get_or_create_artifact(
-        &conn,
-        application_id,
-        Some(job_id),
-        "CoverLetter",
-        &content,
-        &serde_json::to_string(&letter).unwrap(),
-        &now,
-    )?;
 
     Ok(LetterGenerationResult {
         letter,
-        artifact_id,
         content,
     })
 }
 
-// Helper function to get or create artifact
-fn get_or_create_artifact(
+// Helper function to create a new artifact (always creates new, allows multiple per job)
+fn create_artifact(
     conn: &rusqlite::Connection,
     application_id: Option<i64>,
     job_id: Option<i64>,
     artifact_type: &str,
+    title: &str,
     content: &str,
     ai_payload: &str,
     now: &str,
 ) -> Result<i64, String> {
-    // Get job title and company for artifact title
-    let (job_title, company) = if let Some(jid) = job_id {
-        let job_result: Result<(Option<String>, Option<String>), _> = conn
-            .query_row(
-                "SELECT title, company FROM jobs WHERE id = ?",
-                [jid],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            );
-        match job_result {
-            Ok((title, comp)) => (
-                title.unwrap_or_else(|| "Untitled".to_string()),
-                comp.unwrap_or_else(|| "Unknown".to_string()),
-            ),
-            Err(_) => ("Untitled".to_string(), "Unknown".to_string()),
-        }
-    } else {
-        ("Untitled".to_string(), "Unknown".to_string())
-    };
-
-    // Check if artifact already exists
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM artifacts WHERE application_id = ? AND job_id = ? AND type = ? ORDER BY created_at DESC LIMIT 1",
-            rusqlite::params![application_id, job_id, artifact_type],
-            |row| row.get(0),
-        )
-        .ok();
-
-    if let Some(id) = existing {
-        // Update existing
-        conn.execute(
-            "UPDATE artifacts SET content = ?, ai_payload = ?, updated_at = ? WHERE id = ?",
-            rusqlite::params![content, ai_payload, now, id],
-        )
-        .map_err(|e| format!("Failed to update artifact: {}", e))?;
-        return Ok(id);
-    }
-
-    // Create new
-    let title = format!("{} – {} @ {}", artifact_type, job_title, company);
+    // Get model name for tracking
+    let model_name = crate::ai::settings::load_ai_settings()
+        .ok()
+        .and_then(|s| s.model_name)
+        .unwrap_or_else(|| "unknown-model".to_string());
 
     conn.execute(
         "INSERT INTO artifacts (application_id, job_id, type, title, content, format, ai_payload, ai_model, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -2016,7 +2005,7 @@ fn get_or_create_artifact(
             content,
             "markdown",
             ai_payload,
-            "placeholder-model",
+            model_name,
             "ai_generated",
             now,
             now
@@ -2180,8 +2169,7 @@ async fn generate_cover_letter_with_ai(
     })
 }
 
-#[allow(dead_code)]
-fn format_date(date_str: &str) -> String {
+pub fn format_date(date_str: &str) -> String {
     if date_str.len() >= 7 {
         // Format: YYYY-MM
         let parts: Vec<&str> = date_str.split('-').collect();
@@ -2334,6 +2322,29 @@ pub async fn test_ai_connection() -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+pub async fn check_local_provider_availability() -> Result<bool, String> {
+    use crate::ai::settings::load_ai_settings;
+    use std::path::PathBuf;
+    
+    let settings = load_ai_settings()
+        .map_err(|e| format!("Failed to load settings: {}", e))?;
+    
+    // Check if local mode is selected
+    if settings.mode != crate::ai::settings::AiMode::Local {
+        return Ok(false);
+    }
+    
+    // Check if model path is configured
+    let model_path = match settings.local_model_path {
+        Some(path_str) => PathBuf::from(path_str),
+        None => return Ok(false),
+    };
+    
+    // Check if file exists
+    Ok(model_path.exists() && model_path.is_file())
+}
+
 // ============================================================================
 // Artifact Management Commands
 // ============================================================================
@@ -2476,5 +2487,79 @@ pub fn update_artifact(id: i64, content: String) -> Result<Artifact, String> {
     .map_err(|e| format!("Failed to update artifact: {}", e))?;
     
     get_artifact(id)
+}
+
+#[tauri::command]
+pub fn update_artifact_title(id: i64, title: String) -> Result<Artifact, String> {
+    let conn = get_connection()
+        .map_err(|e| format!("Failed to get database connection: {}", e))?;
+    
+    let now = chrono::Utc::now().to_rfc3339();
+    
+    conn.execute(
+        "UPDATE artifacts SET title = ?, updated_at = ? WHERE id = ?",
+        rusqlite::params![title, now, id],
+    )
+    .map_err(|e| format!("Failed to update artifact title: {}", e))?;
+    
+    get_artifact(id)
+}
+
+#[tauri::command]
+pub async fn save_resume(
+    job_id: i64,
+    application_id: Option<i64>,
+    resume: GeneratedResume,
+    title: String,
+) -> Result<Artifact, String> {
+    let conn = get_connection()
+        .map_err(|e| format!("Failed to get database connection: {}", e))?;
+    
+    let now = chrono::Utc::now().to_rfc3339();
+    let content = render_resume_to_text(&resume);
+    let ai_payload = serde_json::to_string(&resume)
+        .map_err(|e| format!("Failed to serialize resume: {}", e))?;
+    
+    let artifact_id = create_artifact(
+        &conn,
+        application_id,
+        Some(job_id),
+        "Resume",
+        &title,
+        &content,
+        &ai_payload,
+        &now,
+    )?;
+    
+    get_artifact(artifact_id)
+}
+
+#[tauri::command]
+pub async fn save_cover_letter(
+    job_id: i64,
+    application_id: Option<i64>,
+    letter: GeneratedLetter,
+    title: String,
+) -> Result<Artifact, String> {
+    let conn = get_connection()
+        .map_err(|e| format!("Failed to get database connection: {}", e))?;
+    
+    let now = chrono::Utc::now().to_rfc3339();
+    let content = render_letter_to_text(&letter);
+    let ai_payload = serde_json::to_string(&letter)
+        .map_err(|e| format!("Failed to serialize letter: {}", e))?;
+    
+    let artifact_id = create_artifact(
+        &conn,
+        application_id,
+        Some(job_id),
+        "CoverLetter",
+        &title,
+        &content,
+        &ai_payload,
+        &now,
+    )?;
+    
+    get_artifact(artifact_id)
 }
 

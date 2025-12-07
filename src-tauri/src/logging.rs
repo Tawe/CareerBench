@@ -15,8 +15,6 @@ pub fn init_logging() {
         // Try to open log file (append mode)
         match File::options().create(true).append(true).open(&log_path) {
             Ok(log_file) => {
-                let config = Config::default();
-                
                 // Use default config - simplelog will handle formatting
                 let config = Config::default();
                 
@@ -76,6 +74,7 @@ pub fn setup_panic_hook() {
 }
 
 /// Log an error with context
+#[allow(dead_code)]
 pub fn log_error(context: &str, error: &dyn std::error::Error) {
     log::error!("[{}] Error: {}", context, error);
     if let Some(source) = error.source() {
@@ -84,11 +83,13 @@ pub fn log_error(context: &str, error: &dyn std::error::Error) {
 }
 
 /// Log a warning with context
+#[allow(dead_code)]
 pub fn log_warning(context: &str, message: &str) {
     log::warn!("[{}] {}", context, message);
 }
 
 /// Log debug information
+#[allow(dead_code)]
 pub fn log_debug(context: &str, message: &str) {
     log::debug!("[{}] {}", context, message);
 }

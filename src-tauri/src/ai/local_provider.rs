@@ -38,6 +38,7 @@ impl LocalProvider {
     }
     
     pub fn with_model_path(path: PathBuf) -> Self {
+        log::info!("[LocalProvider] Initializing with model path: {}", path.display());
         Self {
             model_path: Some(path),
             model_cache: Arc::new(Mutex::new(None)),
@@ -48,45 +49,81 @@ impl LocalProvider {
     /// This is called lazily on first inference request
     async fn ensure_model_loaded(&self) -> Result<Arc<LlamaModel>, AiProviderError> {
         let path = self.model_path.as_ref()
-            .ok_or_else(|| AiProviderError::Unknown(
-                "Local model path not configured. Please set a model path in Settings. \
-                Recommended: Download Phi-3-mini GGUF model from Hugging Face and configure the path.".to_string()
-            ))?;
+            .ok_or_else(|| {
+                let msg = "Local model path not configured. Please set a model path in Settings. \
+                Recommended: Download Phi-3-mini GGUF model from Hugging Face and configure the path.";
+                log::error!("[LocalProvider] {}", msg);
+                AiProviderError::Unknown(msg.to_string())
+            })?;
+        
+        log::info!("[LocalProvider] Checking model path: {}", path.display());
         
         if !path.exists() {
-            return Err(AiProviderError::Unknown(
-                format!("Model file not found at: {}. Please download a GGUF model (e.g., Phi-3-mini) and configure the path in settings.", path.display())
-            ));
+            let msg = format!("Model file not found at: {}. Please download a GGUF model (e.g., Phi-3-mini) and configure the path in settings.", path.display());
+            log::error!("[LocalProvider] {}", msg);
+            return Err(AiProviderError::Unknown(msg));
         }
         
+        log::info!("[LocalProvider] Model file found. Loading model...");
+        
         // Load or get cached model
-        get_or_load_model(&self.model_cache, path.clone()).await
+        match get_or_load_model(&self.model_cache, path.clone()).await {
+            Ok(model) => {
+                log::info!("[LocalProvider] Model loaded successfully");
+                Ok(model)
+            }
+            Err(e) => {
+                log::error!("[LocalProvider] Failed to load model: {}", e);
+                Err(e)
+            }
+        }
     }
     
     /// Run inference on the local model
     /// Formats the prompt and returns JSON response
     async fn run_inference(&self, system_prompt: &str, user_prompt: &str) -> Result<serde_json::Value, AiProviderError> {
+        log::info!("[LocalProvider] Starting inference request");
+        
         // Ensure model is loaded
         let model = self.ensure_model_loaded().await?;
         
         // Format the full prompt for local models
         // Local models typically need a single prompt string rather than system/user separation
         let full_prompt = format!("{}\n\n{}", system_prompt, user_prompt);
+        let prompt_tokens = full_prompt.len() / 4; // Rough estimate
+        log::debug!("[LocalProvider] Prompt length: ~{} chars (~{} tokens)", full_prompt.len(), prompt_tokens);
         
         // Run inference
         // Use a reasonable max_tokens for JSON output (typically 500-1000 tokens is enough)
-        let response = model.generate(&full_prompt, 1000).await?;
+        log::info!("[LocalProvider] Running inference (max_tokens=1000)...");
+        let response = match model.generate(&full_prompt, 1000).await {
+            Ok(r) => {
+                log::info!("[LocalProvider] Inference completed. Response length: {} chars", r.len());
+                r
+            }
+            Err(e) => {
+                log::error!("[LocalProvider] Inference failed: {}", e);
+                return Err(e);
+            }
+        };
         
         // Extract JSON from response (may need to parse markdown code blocks)
+        log::debug!("[LocalProvider] Extracting JSON from response...");
         let json_str = Self::extract_json_from_response(&response);
         
         // Parse JSON
-        let json: serde_json::Value = serde_json::from_str(&json_str)
-            .map_err(|e| AiProviderError::InvalidResponse(
-                format!("Failed to parse JSON from model response: {}. Response was: {}", e, response)
-            ))?;
-        
-        Ok(json)
+        match serde_json::from_str::<serde_json::Value>(&json_str) {
+            Ok(json) => {
+                log::info!("[LocalProvider] Successfully parsed JSON response");
+                Ok(json)
+            }
+            Err(e) => {
+                log::error!("[LocalProvider] Failed to parse JSON: {}. Response was: {}", e, response);
+                Err(AiProviderError::InvalidResponse(
+                    format!("Failed to parse JSON from model response: {}. Response was: {}", e, response)
+                ))
+            }
+        }
     }
     
     /// Extract JSON from model response
@@ -170,6 +207,7 @@ impl Default for LocalProvider {
 #[async_trait]
 impl AiProvider for LocalProvider {
     async fn generate_resume_suggestions(&self, input: ResumeInput) -> Result<ResumeSuggestions, AiProviderError> {
+        log::info!("[LocalProvider] generate_resume_suggestions called");
         let system_prompt = Self::build_resume_system_prompt();
         let user_prompt = format!(
             "Profile data:\n{}\n\nJob description:\n{}\n\nGenerate resume suggestions in JSON format.",
@@ -178,8 +216,16 @@ impl AiProvider for LocalProvider {
         );
         
         let json_response = self.run_inference(&system_prompt, &user_prompt).await?;
-        serde_json::from_value(json_response)
-            .map_err(|e| AiProviderError::ValidationError(format!("Failed to deserialize resume suggestions: {}", e)))
+        match serde_json::from_value(json_response) {
+            Ok(result) => {
+                log::info!("[LocalProvider] Successfully generated resume suggestions");
+                Ok(result)
+            }
+            Err(e) => {
+                log::error!("[LocalProvider] Failed to deserialize resume suggestions: {}", e);
+                Err(AiProviderError::ValidationError(format!("Failed to deserialize resume suggestions: {}", e)))
+            }
+        }
     }
     
     async fn generate_cover_letter(&self, input: CoverLetterInput) -> Result<CoverLetter, AiProviderError> {
@@ -210,6 +256,7 @@ impl AiProvider for LocalProvider {
     }
     
     async fn parse_job(&self, input: JobParsingInput) -> Result<ParsedJobOutput, AiProviderError> {
+        log::info!("[LocalProvider] parse_job called (JD length: {} chars)", input.job_description.len());
         let system_prompt = Self::build_job_parsing_system_prompt();
         let user_prompt = format!(
             "Job description:\n{}\n\nParse this job description and extract structured information in JSON format.",
@@ -217,7 +264,15 @@ impl AiProvider for LocalProvider {
         );
         
         let json_response = self.run_inference(&system_prompt, &user_prompt).await?;
-        serde_json::from_value(json_response)
-            .map_err(|e| AiProviderError::ValidationError(format!("Failed to deserialize parsed job: {}", e)))
+        match serde_json::from_value(json_response) {
+            Ok(result) => {
+                log::info!("[LocalProvider] Successfully parsed job description");
+                Ok(result)
+            }
+            Err(e) => {
+                log::error!("[LocalProvider] Failed to deserialize parsed job: {}", e);
+                Err(AiProviderError::ValidationError(format!("Failed to deserialize parsed job: {}", e)))
+            }
+        }
     }
 }
