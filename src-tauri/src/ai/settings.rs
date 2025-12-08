@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 use crate::db::get_connection;
+use crate::secure_storage::{store_secret, get_secret, remove_secret};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AiSettings {
     pub mode: AiMode,
     pub cloud_provider: Option<CloudProvider>,
-    pub api_key: Option<String>, // Encrypted in production
+    pub api_key: Option<String>, // Encrypted when stored in database
     pub model_name: Option<String>,
     pub local_model_path: Option<String>, // Path to local GGUF model file
 }
@@ -105,9 +106,20 @@ pub fn load_ai_settings() -> Result<AiSettings, String> {
     let settings_result = stmt.query_row([], |row| {
         let mode_str: String = row.get(0)?;
         let cloud_provider_str: Option<String> = row.get(1)?;
-        let api_key: Option<String> = row.get(2)?;
+        let api_key_encrypted: Option<String> = row.get(2)?;
         let model_name: Option<String> = row.get(3)?;
         let local_model_path: Option<String> = row.get(4)?;
+        
+        // Try to get API key from secure storage first, then fall back to database
+        let api_key = if let Ok(Some(secret)) = get_secret("ai_api_key") {
+            Some(secret)
+        } else {
+            // Fallback to database (for backward compatibility)
+            api_key_encrypted.and_then(|encrypted| {
+                // Try to decrypt (for old encrypted values)
+                crate::encryption::decrypt(&encrypted).ok()
+            })
+        };
         
         let mode = serde_json::from_str::<AiMode>(&format!("\"{}\"", mode_str))
             .unwrap_or(AiMode::Cloud);
@@ -142,6 +154,23 @@ pub fn save_ai_settings(settings: &AiSettings) -> Result<(), String> {
     let cloud_provider_str = settings.cloud_provider.as_ref()
         .and_then(|p| serde_json::to_string(p).ok());
     
+    // Store API key in secure storage (OS keychain when available)
+    if let Some(api_key) = &settings.api_key {
+        store_secret("ai_api_key", api_key)
+            .map_err(|e| format!("Failed to store API key in secure storage: {}", e))?;
+    } else {
+        // Remove API key from secure storage if it's being cleared
+        let _ = remove_secret("ai_api_key");
+    }
+    
+    // Store a placeholder in database (for backward compatibility and to indicate key exists)
+    // The actual key is stored in secure storage
+    let api_key_placeholder = if settings.api_key.is_some() {
+        Some("***stored_in_secure_storage***".to_string())
+    } else {
+        None
+    };
+    
     conn.execute(
         "INSERT INTO ai_settings (id, mode, cloud_provider, api_key, model_name, local_model_path, updated_at)
          VALUES (1, ?, ?, ?, ?, ?, ?)
@@ -155,7 +184,7 @@ pub fn save_ai_settings(settings: &AiSettings) -> Result<(), String> {
         rusqlite::params![
             mode_str.trim_matches('"'),
             cloud_provider_str.as_ref().map(|s| s.trim_matches('"')),
-            settings.api_key,
+            api_key_placeholder,
             settings.model_name,
             settings.local_model_path,
             now

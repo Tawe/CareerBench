@@ -216,14 +216,14 @@ impl AiProvider for LocalProvider {
         );
         
         let json_response = self.run_inference(&system_prompt, &user_prompt).await?;
-        match serde_json::from_value(json_response) {
+        match crate::ai::validation::validate_resume_suggestions(&json_response) {
             Ok(result) => {
-                log::info!("[LocalProvider] Successfully generated resume suggestions");
+                log::info!("[LocalProvider] Successfully generated and validated resume suggestions");
                 Ok(result)
             }
             Err(e) => {
-                log::error!("[LocalProvider] Failed to deserialize resume suggestions: {}", e);
-                Err(AiProviderError::ValidationError(format!("Failed to deserialize resume suggestions: {}", e)))
+                log::error!("[LocalProvider] Failed to validate resume suggestions: {}", e);
+                Err(e)
             }
         }
     }
@@ -238,8 +238,7 @@ impl AiProvider for LocalProvider {
         );
         
         let json_response = self.run_inference(&system_prompt, &user_prompt).await?;
-        serde_json::from_value(json_response)
-            .map_err(|e| AiProviderError::ValidationError(format!("Failed to deserialize cover letter: {}", e)))
+        crate::ai::validation::validate_cover_letter(&json_response)
     }
     
     async fn generate_skill_suggestions(&self, input: SkillSuggestionsInput) -> Result<SkillSuggestions, AiProviderError> {
@@ -251,8 +250,7 @@ impl AiProvider for LocalProvider {
         );
         
         let json_response = self.run_inference(&system_prompt, &user_prompt).await?;
-        serde_json::from_value(json_response)
-            .map_err(|e| AiProviderError::ValidationError(format!("Failed to deserialize skill suggestions: {}", e)))
+        crate::ai::validation::validate_skill_suggestions(&json_response)
     }
     
     async fn parse_job(&self, input: JobParsingInput) -> Result<ParsedJobOutput, AiProviderError> {
@@ -264,15 +262,33 @@ impl AiProvider for LocalProvider {
         );
         
         let json_response = self.run_inference(&system_prompt, &user_prompt).await?;
-        match serde_json::from_value(json_response) {
+        match crate::ai::validation::validate_parsed_job(&json_response) {
             Ok(result) => {
-                log::info!("[LocalProvider] Successfully parsed job description");
+                log::info!("[LocalProvider] Successfully parsed and validated job description");
                 Ok(result)
             }
             Err(e) => {
-                log::error!("[LocalProvider] Failed to deserialize parsed job: {}", e);
-                Err(AiProviderError::ValidationError(format!("Failed to deserialize parsed job: {}", e)))
+                log::error!("[LocalProvider] Failed to validate parsed job: {}", e);
+                Err(e)
             }
         }
+    }
+    
+    async fn call_llm(&self, system_prompt: Option<&str>, user_prompt: &str) -> Result<String, AiProviderError> {
+        let system = system_prompt.unwrap_or("You are a helpful AI assistant. Always respond with valid JSON when requested.");
+        
+        // Ensure model is loaded
+        let model = self.ensure_model_loaded().await?;
+        
+        // Format the full prompt for local models
+        let full_prompt = format!("{}\n\n{}", system, user_prompt);
+        
+        // Run inference directly to get raw text response
+        let response = model.generate(&full_prompt, 2000).await?;
+        
+        // Extract JSON from response (handles markdown code blocks)
+        let json_str = Self::extract_json_from_response(&response);
+        
+        Ok(json_str)
     }
 }

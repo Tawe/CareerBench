@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNavigate } from "react-router-dom";
+import { InlineEditable } from "../components/InlineEditable";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
+import { showToast } from "../components/Toast";
+import { ProgressIndicator, ProgressStep } from "../components/ProgressIndicator";
+import { formatErrorForUser, formatErrorWithSuggestions } from "../utils/errorUtils";
 import "./Jobs.css";
 
 interface JobSummary {
@@ -89,7 +94,17 @@ export default function Jobs() {
   if (isLoading && jobs.length === 0) {
     return (
       <div className="jobs">
-        <div className="loading">Loading jobs...</div>
+        <div className="jobs-header">
+          <LoadingSkeleton width="150px" height="2rem" />
+        </div>
+        <div className="jobs-layout">
+          <div className="jobs-sidebar">
+            <LoadingSkeleton variant="list" lines={5} />
+          </div>
+          <div className="job-detail">
+            <LoadingSkeleton variant="card" />
+          </div>
+        </div>
       </div>
     );
   }
@@ -98,7 +113,11 @@ export default function Jobs() {
     <div className="jobs">
       <div className="jobs-header">
         <h1>Jobs</h1>
-        <button onClick={() => setShowAddModal(true)} className="add-button">
+        <button 
+          onClick={() => setShowAddModal(true)} 
+          className="add-button"
+          aria-label="Add new job"
+        >
           + Add Job
         </button>
       </div>
@@ -141,10 +160,59 @@ export default function Jobs() {
                   key={job.id}
                   className={`job-card ${selectedJob?.id === job.id ? "active" : ""}`}
                   onClick={() => handleJobClick(job)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleJobClick(job);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`Job: ${job.title || "Untitled"} at ${job.company || "Unknown Company"}`}
                 >
-                  <div className="job-card-content">
-                    <h3>{job.title || "Untitled"}</h3>
-                    <p className="job-company">{job.company || "Unknown Company"}</p>
+                  <div className="job-card-content" onClick={(e) => e.stopPropagation()}>
+                    <h3>
+                      <InlineEditable
+                        value={job.title || ""}
+                        onSave={async (newTitle) => {
+                          if (!job.id) return;
+                          try {
+                            await invoke<Job>("update_job", {
+                              id: job.id,
+                              input: {
+                                title: newTitle || null,
+                              },
+                            });
+                            loadJobs();
+                          } catch (err: any) {
+                            showToast(err?.message || "Failed to update job title", "error");
+                          }
+                        }}
+                        placeholder="Untitled"
+                        className="job-title-inline"
+                      />
+                    </h3>
+                    <p className="job-company">
+                      <InlineEditable
+                        value={job.company || ""}
+                        onSave={async (newCompany) => {
+                          if (!job.id) return;
+                          try {
+                            await invoke<Job>("update_job", {
+                              id: job.id,
+                              input: {
+                                company: newCompany || null,
+                              },
+                            });
+                            loadJobs();
+                          } catch (err: any) {
+                            showToast(err?.message || "Failed to update company", "error");
+                          }
+                        }}
+                        placeholder="Unknown Company"
+                        className="job-company-inline"
+                      />
+                    </p>
                     {job.location && <p className="job-location">{job.location}</p>}
                     {job.seniority && (
                       <span className="job-badge">{job.seniority}</span>
@@ -162,8 +230,9 @@ export default function Jobs() {
                           // Trigger parse action
                         }}
                         title="Parse with AI"
+                        aria-label={`Parse job ${job.title || 'Untitled'} with AI`}
                       >
-                        <span>🤖</span>
+                        <span aria-hidden="true">🤖</span>
                       </button>
                       <button
                         className="action-button"
@@ -171,12 +240,17 @@ export default function Jobs() {
                           // Create application from job
                         }}
                         title="Create Application"
+                        aria-label={`Create application for ${job.title || 'Untitled'}`}
                       >
-                        <span>📝</span>
+                        <span aria-hidden="true">📝</span>
                       </button>
                     </div>
-                    <button className="menu-button" title="More options">
-                      <span>⋯</span>
+                    <button 
+                      className="menu-button" 
+                      title="More options"
+                      aria-label="More options for this job"
+                    >
+                      <span aria-hidden="true">⋯</span>
                     </button>
                   </div>
                 </div>
@@ -257,7 +331,7 @@ function JobDetailView({
       setIsEditing(false);
       onUpdate();
     } catch (err: any) {
-      alert(err?.message || "Failed to save job");
+      showToast(err?.message || "Failed to save job", "error");
     } finally {
       setIsSaving(false);
     }
@@ -274,7 +348,7 @@ function JobDetailView({
       setFormData(updated);
       onUpdate();
     } catch (err: any) {
-      alert(err?.message || "Failed to parse job");
+      showToast(err?.message || "Failed to parse job", "error");
     } finally {
       setIsParsing(false);
     }
@@ -287,7 +361,11 @@ function JobDetailView({
         <div className="detail-actions">
               {!isEditing && (
                 <>
-                  <button onClick={() => setIsEditing(true)} className="edit-button">
+                  <button 
+                    onClick={() => setIsEditing(true)} 
+                    className="edit-button"
+                    aria-label="Edit job details"
+                  >
                     Edit
                   </button>
                   {formData.raw_description && (
@@ -295,13 +373,19 @@ function JobDetailView({
                       onClick={parseWithAI}
                       disabled={isParsing}
                       className="parse-button"
+                      aria-label={isParsing ? "Parsing job description" : "Parse job description with AI"}
+                      style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
                     >
+                      {isParsing && (
+                        <ProgressIndicator variant="compact" message="Parsing..." />
+                      )}
                       {isParsing ? "Parsing..." : "Parse with AI"}
                     </button>
                   )}
                   <button
                     onClick={() => setShowGenerateModal(true)}
                     className="generate-button"
+                    aria-label="Generate resume and cover letter for this job"
                   >
                     Generate Resume/Cover Letter
                   </button>
@@ -309,13 +393,18 @@ function JobDetailView({
               )}
           {isEditing && (
             <>
-              <button onClick={() => setIsEditing(false)} className="cancel-button">
+              <button 
+                onClick={() => setIsEditing(false)} 
+                className="cancel-button"
+                aria-label="Cancel editing job"
+              >
                 Cancel
               </button>
               <button
                 onClick={saveJob}
                 disabled={isSaving}
                 className="save-button"
+                aria-label={isSaving ? "Saving job" : "Save job changes"}
               >
                 {isSaving ? "Saving..." : "Save"}
               </button>
@@ -333,8 +422,9 @@ function JobDetailView({
                 className="section-edit-button"
                 onClick={() => setIsEditing(true)}
                 title="Edit"
+                aria-label="Edit this section"
               >
-                <span>✏️</span>
+                <span aria-hidden="true">✏️</span>
               </button>
             )}
           </div>
@@ -432,8 +522,9 @@ function JobDetailView({
                 className="section-edit-button"
                 onClick={() => setIsEditing(true)}
                 title="Edit"
+                aria-label="Edit this section"
               >
-                <span>✏️</span>
+                <span aria-hidden="true">✏️</span>
               </button>
             )}
           </div>
@@ -576,10 +667,64 @@ function AddJobSheet({
     raw_description: "",
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [isScraping, setIsScraping] = useState(false);
+
+  // Handle Escape key to close sheet
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  // Handle Enter key to submit form (but not in textarea)
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter" && e.target instanceof HTMLInputElement && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  }
+
+  async function handleScrapeUrl() {
+    if (!formData.posting_url) {
+      showToast("Please enter a URL first", "warning");
+      return;
+    }
+
+    setIsScraping(true);
+    try {
+      const scraped = await invoke<{
+        title?: string;
+        company?: string;
+        location?: string;
+        description: string;
+        source: string;
+      }>("scrape_job_url", { url: formData.posting_url });
+
+      // Populate form with scraped data
+      setFormData((prev) => ({
+        ...prev,
+        title: prev.title || scraped.title || "",
+        company: prev.company || scraped.company || "",
+        location: prev.location || scraped.location || "",
+        job_source: prev.job_source || scraped.source || "",
+        raw_description: prev.raw_description || scraped.description || "",
+      }));
+
+      showToast(`Successfully scraped job from ${scraped.source}`, "success");
+    } catch (err: any) {
+      showToast(err?.message || "Failed to scrape job URL", "error");
+    } finally {
+      setIsScraping(false);
+    }
+  }
 
   async function handleSubmit() {
     if (!formData.title && !formData.company && !formData.raw_description) {
-      alert("Please provide at least a title, company, or description");
+      showToast("Please provide at least a title, company, or description", "warning");
       return;
     }
 
@@ -595,9 +740,10 @@ function AddJobSheet({
           raw_description: formData.raw_description || null,
         },
       });
+      showToast("Job created successfully", "success");
       onSuccess();
     } catch (err: any) {
-      alert(err?.message || "Failed to create job");
+      showToast(err?.message || "Failed to create job", "error");
     } finally {
       setIsSaving(false);
     }
@@ -609,8 +755,12 @@ function AddJobSheet({
       <div className="sheet-container" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-header">
           <h2>Add Job</h2>
-          <button onClick={onClose} className="sheet-close-button">
-            ×
+          <button 
+            onClick={onClose} 
+            className="sheet-close-button"
+            aria-label="Close dialog"
+          >
+            <span aria-hidden="true">×</span>
           </button>
         </div>
         <div className="sheet-body">
@@ -623,6 +773,7 @@ function AddJobSheet({
                 onChange={(e) =>
                   setFormData({ ...formData, title: e.target.value })
                 }
+                onKeyDown={handleKeyDown}
                 placeholder="Senior Software Engineer"
               />
             </div>
@@ -634,6 +785,7 @@ function AddJobSheet({
                 onChange={(e) =>
                   setFormData({ ...formData, company: e.target.value })
                 }
+                onKeyDown={handleKeyDown}
                 placeholder="Acme Corp"
               />
             </div>
@@ -665,14 +817,28 @@ function AddJobSheet({
             </div>
             <div className="form-group full-width">
               <label>Posting URL</label>
-              <input
-                type="url"
-                value={formData.posting_url}
-                onChange={(e) =>
-                  setFormData({ ...formData, posting_url: e.target.value })
-                }
-                placeholder="https://..."
-              />
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <input
+                  type="url"
+                  value={formData.posting_url}
+                  onChange={(e) =>
+                    setFormData({ ...formData, posting_url: e.target.value })
+                  }
+                  placeholder="https://..."
+                  style={{ flex: 1 }}
+                  onKeyDown={handleKeyDown}
+                />
+                <button
+                  type="button"
+                  onClick={handleScrapeUrl}
+                  disabled={!formData.posting_url || isScraping}
+                  className="scrape-button"
+                  aria-label={isScraping ? "Scraping job from URL" : "Scrape job details from URL"}
+                  title="Extract job details from URL"
+                >
+                  {isScraping ? "Scraping..." : "🔍 Scrape"}
+                </button>
+              </div>
             </div>
             <div className="form-group full-width">
               <label>Job Description</label>
@@ -683,18 +849,30 @@ function AddJobSheet({
                 }
                 placeholder="Paste the full job description here..."
                 rows={10}
+                onKeyDown={(e) => {
+                  // Allow Enter in textarea, but Cmd/Ctrl+Enter submits
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    handleSubmit();
+                  }
+                }}
               />
             </div>
           </div>
         </div>
         <div className="sheet-footer">
-          <button onClick={onClose} className="cancel-button">
+          <button 
+            onClick={onClose} 
+            className="cancel-button"
+            aria-label="Cancel adding job"
+          >
             Cancel
           </button>
           <button
             onClick={handleSubmit}
             disabled={isSaving}
             className="save-button"
+            aria-label={isSaving ? "Saving job" : "Save and add job"}
           >
             {isSaving ? "Saving..." : "Save & Add"}
           </button>
@@ -724,6 +902,7 @@ function GenerateResumeSheet({
   });
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<string>("");
+  const [generationSteps, setGenerationSteps] = useState<ProgressStep[]>([]);
   const [generatedResume, setGeneratedResume] = useState<any>(null);
   const [generatedLetter, setGeneratedLetter] = useState<any>(null);
   const [resumeContent, setResumeContent] = useState<string>("");
@@ -735,7 +914,20 @@ function GenerateResumeSheet({
   const [letterName, setLetterName] = useState<string>("");
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [savedArtifacts, setSavedArtifacts] = useState<any[]>([]);
+  const [resumeViewMode, setResumeViewMode] = useState<"structured" | "text">("structured");
+  const [letterViewMode, setLetterViewMode] = useState<"structured" | "text">("structured");
   const navigate = useNavigate();
+
+  // Handle Escape key to close sheet
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   useEffect(() => {
     // Load AI settings to show provider status
@@ -769,9 +961,25 @@ function GenerateResumeSheet({
     setError(null);
     setGenerationProgress("");
     
+    // Set up progress steps based on artifact type
+    if (artifactType === "both") {
+      setGenerationSteps([
+        { id: "resume", label: "Generating Resume", status: "active" },
+        { id: "letter", label: "Generating Cover Letter", status: "pending" },
+      ]);
+    } else if (artifactType === "resume") {
+      setGenerationSteps([
+        { id: "resume", label: "Generating Resume", status: "active" },
+      ]);
+    } else {
+      setGenerationSteps([
+        { id: "letter", label: "Generating Cover Letter", status: "active" },
+      ]);
+    }
+    
     try {
       if (artifactType === "resume" || artifactType === "both") {
-        setGenerationProgress("Generating resume...");
+        setGenerationProgress("Analyzing job requirements and generating resume...");
         const result = await invoke<any>("generate_resume_for_job", {
           jobId: jobId,
           applicationId: null,
@@ -786,14 +994,25 @@ function GenerateResumeSheet({
         // Set default resume name
         const defaultResumeName = `${jobTitle} @ ${company} - ${new Date().toLocaleDateString()}`;
         setResumeName(defaultResumeName);
+        
+        // Update progress steps
         if (artifactType === "both") {
-          setGenerationProgress("Resume generated. Generating cover letter...");
+          setGenerationSteps([
+            { id: "resume", label: "Generating Resume", status: "completed" },
+            { id: "letter", label: "Generating Cover Letter", status: "active" },
+          ]);
+          setGenerationProgress("Resume generated. Analyzing job requirements and generating cover letter...");
+        } else {
+          setGenerationSteps([
+            { id: "resume", label: "Generating Resume", status: "completed" },
+          ]);
+          setGenerationProgress("");
         }
       }
 
       if (artifactType === "cover_letter" || artifactType === "both") {
         if (artifactType === "cover_letter") {
-          setGenerationProgress("Generating cover letter...");
+          setGenerationProgress("Analyzing job requirements and generating cover letter...");
         }
         const result = await invoke<any>("generate_cover_letter_for_job", {
           jobId: jobId,
@@ -809,27 +1028,32 @@ function GenerateResumeSheet({
         // Set default letter name
         const defaultLetterName = `Cover Letter - ${jobTitle} @ ${company} - ${new Date().toLocaleDateString()}`;
         setLetterName(defaultLetterName);
+        
+        // Update progress steps
+        setGenerationSteps((prev) =>
+          prev.map((step) =>
+            step.id === "letter" ? { ...step, status: "completed" as const } : step
+          )
+        );
         setGenerationProgress("");
       }
     } catch (err: any) {
       const errorMessage = err?.message || "Failed to generate";
-      // Provide helpful error messages
-      if (errorMessage.includes("not yet implemented") || errorMessage.includes("Local model") || errorMessage.includes("model path not configured") || errorMessage.includes("Failed to resolve provider") || errorMessage.includes("requires") || errorMessage.includes("not set up") || errorMessage.includes("not configured")) {
-        setError(
-          "AI provider is not configured. Please configure your AI provider in Settings."
-        );
-      } else if (errorMessage.includes("API key") || errorMessage.includes("Invalid") || errorMessage.includes("not set up")) {
-        setError(
-          "AI provider is not set up. Please configure your AI provider in Settings."
-        );
-      } else if (errorMessage.includes("Network") || errorMessage.includes("connection")) {
-        setError(
-          "Network error. Please check your internet connection and try again."
-        );
-      } else {
-        setError(errorMessage);
-      }
+      const errorInfo = formatErrorForUser(errorMessage);
+      
+      // Set error with suggestions
+      setError(formatErrorWithSuggestions(errorInfo));
+      
+      // Show toast with short message
+      showToast(errorInfo.message, "error");
+      
       setGenerationProgress("");
+      // Mark current step as error
+      setGenerationSteps((prev) =>
+        prev.map((step) =>
+          step.status === "active" ? { ...step, status: "error" as const } : step
+        )
+      );
     } finally {
       setIsGenerating(false);
     }
@@ -909,30 +1133,69 @@ function GenerateResumeSheet({
       <div className="sheet-container" style={{ maxWidth: '800px' }} onClick={(e) => e.stopPropagation()}>
         <div className="sheet-header">
           <h2>Generate Resume & Cover Letter</h2>
-          <button onClick={onClose} className="sheet-close-button">
-            ×
+          <button 
+            onClick={onClose} 
+            className="sheet-close-button"
+            aria-label="Close dialog"
+          >
+            <span aria-hidden="true">×</span>
           </button>
         </div>
         <div className="sheet-body">
-          {error && (
-            <div className="error-banner" style={{ marginBottom: "1rem" }}>
-              {error}
-              {error.includes("Settings") && (
-                <div style={{ marginTop: "0.5rem" }}>
-                  <a
-                    href="#"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      navigate("/settings");
-                    }}
-                    style={{ color: "inherit", textDecoration: "underline", cursor: "pointer" }}
-                  >
-                    Go to Settings →
-                  </a>
+          {error && (() => {
+            const errorInfo = formatErrorForUser(error);
+            return (
+              <div className="error-banner" style={{ marginBottom: "1rem" }}>
+                <div style={{ marginBottom: errorInfo.suggestions.length > 0 ? "0.75rem" : "0" }}>
+                  <strong>{errorInfo.message}</strong>
                 </div>
-              )}
-            </div>
-          )}
+                {errorInfo.suggestions.length > 0 && (
+                  <div style={{ marginTop: "0.5rem", fontSize: "0.875rem" }}>
+                    <div style={{ marginBottom: "0.25rem", fontWeight: "500" }}>Suggestions:</div>
+                    <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
+                      {errorInfo.suggestions.map((suggestion, idx) => (
+                        <li key={idx} style={{ marginBottom: "0.25rem" }}>{suggestion}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {errorInfo.requiresAction && (
+                  <div style={{ marginTop: "0.75rem" }}>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        navigate("/settings");
+                      }}
+                      className="btn-primary"
+                      style={{ fontSize: "0.875rem", padding: "0.375rem 0.75rem" }}
+                    >
+                      Go to Settings →
+                    </button>
+                  </div>
+                )}
+                <button 
+                  onClick={() => setError(null)} 
+                  style={{ 
+                    position: "absolute", 
+                    top: "0.5rem", 
+                    right: "0.5rem",
+                    background: "none",
+                    border: "none",
+                    fontSize: "1.5rem",
+                    cursor: "pointer",
+                    color: "inherit",
+                    padding: "0",
+                    width: "24px",
+                    height: "24px",
+                    lineHeight: "1"
+                  }}
+                  aria-label="Dismiss error"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })()}
           
           {aiSettings && (
             <div className="provider-status" style={{ 
@@ -963,24 +1226,20 @@ function GenerateResumeSheet({
                 </p>
               </div>
               
-              {isGenerating && generationProgress && (
-                <div className="generation-progress" style={{
-                  marginBottom: "1rem",
-                  padding: "1rem",
-                  backgroundColor: "#f9fafb",
-                  borderRadius: "0.375rem",
-                  textAlign: "center"
-                }}>
-                  <div style={{ marginBottom: "0.5rem" }}>{generationProgress}</div>
-                  <div className="loading-spinner" style={{
-                    display: "inline-block",
-                    width: "20px",
-                    height: "20px",
-                    border: "3px solid #e5e7eb",
-                    borderTopColor: "#6366f1",
-                    borderRadius: "50%",
-                    animation: "spin 0.8s linear infinite"
-                  }}></div>
+              {isGenerating && (
+                <div style={{ marginBottom: "1rem" }}>
+                  {generationSteps.length > 1 ? (
+                    <ProgressIndicator
+                      variant="steps"
+                      steps={generationSteps}
+                      message={generationProgress}
+                    />
+                  ) : (
+                    <ProgressIndicator
+                      variant="spinner"
+                      message={generationProgress}
+                    />
+                  )}
                 </div>
               )}
 
@@ -1085,6 +1344,39 @@ function GenerateResumeSheet({
                       style={{ width: "100%", padding: "0.5rem" }}
                     />
                   </div>
+                  
+                  {/* Preview view toggle */}
+                  <div style={{ marginBottom: "0.5rem", display: "flex", gap: "0.5rem" }}>
+                    <button
+                      onClick={() => setResumeViewMode("structured")}
+                      style={{
+                        padding: "0.375rem 0.75rem",
+                        backgroundColor: resumeViewMode === "structured" ? "#6366f1" : "#e5e7eb",
+                        color: resumeViewMode === "structured" ? "white" : "#374151",
+                        border: "none",
+                        borderRadius: "0.375rem",
+                        cursor: "pointer",
+                        fontSize: "0.875rem"
+                      }}
+                    >
+                      Structured View
+                    </button>
+                    <button
+                      onClick={() => setResumeViewMode("text")}
+                      style={{
+                        padding: "0.375rem 0.75rem",
+                        backgroundColor: resumeViewMode === "text" ? "#6366f1" : "#e5e7eb",
+                        color: resumeViewMode === "text" ? "white" : "#374151",
+                        border: "none",
+                        borderRadius: "0.375rem",
+                        cursor: "pointer",
+                        fontSize: "0.875rem"
+                      }}
+                    >
+                      Raw Text View
+                    </button>
+                  </div>
+                  
                   <div className="content-preview" style={{ 
                     maxHeight: "400px", 
                     overflow: "auto",
@@ -1093,7 +1385,56 @@ function GenerateResumeSheet({
                     borderRadius: "0.375rem",
                     marginBottom: "1rem"
                   }}>
-                    <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{resumeContent}</pre>
+                    {resumeViewMode === "structured" ? (
+                      <div className="structured-resume-view">
+                        {generatedResume.headline && (
+                          <h2 style={{ marginBottom: "0.5rem", fontSize: "1.25rem", fontWeight: "bold" }}>
+                            {generatedResume.headline}
+                          </h2>
+                        )}
+                        {generatedResume.summary && (
+                          <p style={{ marginBottom: "1rem", color: "#4b5563" }}>
+                            {generatedResume.summary}
+                          </p>
+                        )}
+                        {generatedResume.sections.map((section: any, sectionIdx: number) => (
+                          <div key={sectionIdx} style={{ marginBottom: "1.5rem" }}>
+                            <h3 style={{ 
+                              marginBottom: "0.75rem", 
+                              fontSize: "1.125rem", 
+                              fontWeight: "600",
+                              borderBottom: "1px solid #e5e7eb",
+                              paddingBottom: "0.25rem"
+                            }}>
+                              {section.title}
+                            </h3>
+                            {section.items.map((item: any, itemIdx: number) => (
+                              <div key={itemIdx} style={{ marginBottom: "1rem" }}>
+                                <h4 style={{ marginBottom: "0.25rem", fontSize: "1rem", fontWeight: "500" }}>
+                                  {item.heading}
+                                </h4>
+                                {item.subheading && (
+                                  <p style={{ fontSize: "0.875rem", color: "#6b7280", marginBottom: "0.5rem" }}>
+                                    {item.subheading}
+                                  </p>
+                                )}
+                                {item.bullets && item.bullets.length > 0 && (
+                                  <ul style={{ marginLeft: "1.5rem", marginTop: "0.25rem" }}>
+                                    {item.bullets.map((bullet: string, bulletIdx: number) => (
+                                      <li key={bulletIdx} style={{ marginBottom: "0.25rem", color: "#374151" }}>
+                                        {bullet}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{resumeContent}</pre>
+                    )}
                   </div>
                 </div>
               )}
@@ -1111,6 +1452,39 @@ function GenerateResumeSheet({
                       style={{ width: "100%", padding: "0.5rem" }}
                     />
                   </div>
+                  
+                  {/* Preview view toggle */}
+                  <div style={{ marginBottom: "0.5rem", display: "flex", gap: "0.5rem" }}>
+                    <button
+                      onClick={() => setLetterViewMode("structured")}
+                      style={{
+                        padding: "0.375rem 0.75rem",
+                        backgroundColor: letterViewMode === "structured" ? "#6366f1" : "#e5e7eb",
+                        color: letterViewMode === "structured" ? "white" : "#374151",
+                        border: "none",
+                        borderRadius: "0.375rem",
+                        cursor: "pointer",
+                        fontSize: "0.875rem"
+                      }}
+                    >
+                      Structured View
+                    </button>
+                    <button
+                      onClick={() => setLetterViewMode("text")}
+                      style={{
+                        padding: "0.375rem 0.75rem",
+                        backgroundColor: letterViewMode === "text" ? "#6366f1" : "#e5e7eb",
+                        color: letterViewMode === "text" ? "white" : "#374151",
+                        border: "none",
+                        borderRadius: "0.375rem",
+                        cursor: "pointer",
+                        fontSize: "0.875rem"
+                      }}
+                    >
+                      Raw Text View
+                    </button>
+                  </div>
+                  
                   <div className="content-preview" style={{ 
                     maxHeight: "400px", 
                     overflow: "auto",
@@ -1119,7 +1493,32 @@ function GenerateResumeSheet({
                     borderRadius: "0.375rem",
                     marginBottom: "1rem"
                   }}>
-                    <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{letterContent}</pre>
+                    {letterViewMode === "structured" ? (
+                      <div className="structured-letter-view">
+                        {generatedLetter.subject && (
+                          <div style={{ marginBottom: "1rem" }}>
+                            <strong style={{ color: "#6b7280", fontSize: "0.875rem" }}>Subject:</strong>
+                            <p style={{ marginTop: "0.25rem", fontWeight: "500" }}>{generatedLetter.subject}</p>
+                          </div>
+                        )}
+                        {generatedLetter.greeting && (
+                          <p style={{ marginBottom: "1rem" }}>{generatedLetter.greeting}</p>
+                        )}
+                        {generatedLetter.body_paragraphs.map((paragraph: string, idx: number) => (
+                          <p key={idx} style={{ marginBottom: "1rem", lineHeight: "1.6", color: "#374151" }}>
+                            {paragraph}
+                          </p>
+                        ))}
+                        {generatedLetter.closing && (
+                          <p style={{ marginBottom: "0.5rem", marginTop: "1rem" }}>{generatedLetter.closing}</p>
+                        )}
+                        {generatedLetter.signature && (
+                          <p style={{ marginTop: "1rem" }}>{generatedLetter.signature}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{letterContent}</pre>
+                    )}
                   </div>
                 </div>
               )}

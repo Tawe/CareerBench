@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AiSettings, CloudProvider } from "../ai/types";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
+import { showToast } from "../components/Toast";
 import "./Settings.css";
 
 export default function Settings() {
@@ -62,7 +64,12 @@ export default function Settings() {
   if (isLoading) {
     return (
       <div className="settings-page">
-        <div className="loading">Loading settings...</div>
+        <div className="settings-header">
+          <LoadingSkeleton width="200px" height="2rem" />
+        </div>
+        <div className="settings-content">
+          <LoadingSkeleton variant="card" />
+        </div>
       </div>
     );
   }
@@ -159,7 +166,7 @@ export default function Settings() {
                 }
               >
                 <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic (Coming Soon)</option>
+                <option value="anthropic">Anthropic</option>
               </select>
             </div>
 
@@ -174,10 +181,20 @@ export default function Settings() {
                 placeholder="Enter your API key"
               />
               <p className="form-help">
-                Your API key is stored locally and never shared. For OpenAI, get your key at{" "}
-                <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">
-                  platform.openai.com
-                </a>
+                Your API key is stored locally and never shared.{" "}
+                {settings.cloudProvider === "openai" ? (
+                  <>Get your OpenAI key at{" "}
+                    <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">
+                      platform.openai.com
+                    </a>
+                  </>
+                ) : (
+                  <>Get your Anthropic key at{" "}
+                    <a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer">
+                      console.anthropic.com
+                    </a>
+                  </>
+                )}
               </p>
             </div>
 
@@ -185,14 +202,18 @@ export default function Settings() {
               <label>Model Name</label>
               <input
                 type="text"
-                value={settings.modelName || ""}
+                value={settings.modelName || (settings.cloudProvider === "anthropic" ? "claude-3-5-sonnet-20241022" : "gpt-4o-mini")}
                 onChange={(e) =>
                   setSettings({ ...settings, modelName: e.target.value })
                 }
-                placeholder="e.g., gpt-4o-mini, gpt-4"
+                placeholder={settings.cloudProvider === "anthropic" ? "e.g., claude-3-5-sonnet-20241022" : "e.g., gpt-4o-mini, gpt-4"}
               />
               <p className="form-help">
-                Leave empty to use default model (gpt-4o-mini for OpenAI)
+                {settings.cloudProvider === "openai" ? (
+                  <>Recommended: gpt-4o-mini, gpt-4o, or gpt-4-turbo</>
+                ) : (
+                  <>Recommended: claude-3-5-sonnet-20241022, claude-3-opus-20240229, or claude-3-haiku-20240307</>
+                )}
               </p>
             </div>
 

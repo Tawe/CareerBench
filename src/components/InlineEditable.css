@@ -1,0 +1,53 @@
+.inline-editable-display {
+  display: inline-block;
+  min-width: 100px;
+  word-break: break-word;
+}
+
+.inline-editable-display:hover {
+  background-color: #f3f4f6;
+}
+
+.inline-editable-input {
+  width: 100%;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #6366f1;
+  border-radius: 0.25rem;
+  font-size: inherit;
+  font-family: inherit;
+  background-color: white;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.inline-editable-input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.inline-editable-error {
+  border-color: #ef4444 !important;
+}
+
+.job-title-inline {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: #111827;
+}
+
+.job-company-inline {
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+.skill-name-inline {
+  font-weight: 500;
+  color: #111827;
+}
+
+.notes-inline-editable {
+  min-height: 4rem;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+

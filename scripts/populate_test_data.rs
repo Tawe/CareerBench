@@ -12,11 +12,19 @@ use std::path::PathBuf;
 use chrono::Utc;
 
 fn get_db_path() -> PathBuf {
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("src-tauri")
-        .join(".careerbench")
-        .join("careerbench.db")
+    // When run from src-tauri directory, current_dir is already src-tauri
+    // So we just need .careerbench/careerbench.db
+    let current_dir = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."));
+    
+    // Check if we're in src-tauri (has Cargo.toml) or project root
+    if current_dir.join("Cargo.toml").exists() && current_dir.join("src").exists() {
+        // We're in src-tauri directory
+        current_dir.join(".careerbench").join("careerbench.db")
+    } else {
+        // We're in project root, need to go to src-tauri
+        current_dir.join("src-tauri").join(".careerbench").join("careerbench.db")
+    }
 }
 
 fn clear_database(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
@@ -386,16 +394,241 @@ Requirements:
     Ok(())
 }
 
+fn init_database_if_needed(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    // Check if migrations table exists
+    let migrations_exist: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='migrations'",
+            [],
+            |row| Ok(row.get::<_, i64>(0)? > 0),
+        )
+        .unwrap_or(false);
+    
+    if !migrations_exist {
+        println!("Initializing database schema...");
+        
+        // Create migrations table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS migrations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                applied_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+        
+        // Run basic schema creation (simplified version)
+        // This is a minimal schema - the full migrations are in db.rs
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS user_profile (
+                id INTEGER PRIMARY KEY,
+                full_name TEXT NOT NULL,
+                headline TEXT,
+                location TEXT,
+                summary TEXT,
+                current_role_title TEXT,
+                current_company TEXT,
+                seniority TEXT,
+                open_to_roles INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+        
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS experience (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_profile_id INTEGER NOT NULL,
+                company TEXT NOT NULL,
+                title TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT,
+                current INTEGER DEFAULT 0,
+                description TEXT,
+                location TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (user_profile_id) REFERENCES user_profile(id)
+            )",
+            [],
+        )?;
+        
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skills (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_profile_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                category TEXT,
+                proficiency TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (user_profile_id) REFERENCES user_profile(id)
+            )",
+            [],
+        )?;
+        
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS education (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_profile_id INTEGER NOT NULL,
+                institution TEXT NOT NULL,
+                degree TEXT,
+                field_of_study TEXT,
+                start_date TEXT,
+                end_date TEXT,
+                gpa TEXT,
+                honors TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (user_profile_id) REFERENCES user_profile(id)
+            )",
+            [],
+        )?;
+        
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS certifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_profile_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                issuer TEXT,
+                issue_date TEXT,
+                expiry_date TEXT,
+                credential_id TEXT,
+                credential_url TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (user_profile_id) REFERENCES user_profile(id)
+            )",
+            [],
+        )?;
+        
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS portfolio_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_profile_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                url TEXT,
+                description TEXT,
+                role TEXT,
+                tech_stack TEXT,
+                highlighted INTEGER DEFAULT 0,
+                FOREIGN KEY (user_profile_id) REFERENCES user_profile(id)
+            )",
+            [],
+        )?;
+        
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                company TEXT,
+                location TEXT,
+                job_source TEXT,
+                posting_url TEXT,
+                raw_description TEXT,
+                parsed_json TEXT,
+                seniority TEXT,
+                domain_tags TEXT,
+                is_active INTEGER DEFAULT 1,
+                date_added TEXT NOT NULL,
+                last_updated TEXT NOT NULL
+            )",
+            [],
+        )?;
+        
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS applications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                channel TEXT,
+                priority TEXT,
+                date_saved TEXT NOT NULL,
+                date_applied TEXT,
+                last_activity_date TEXT,
+                next_action_date TEXT,
+                next_action_note TEXT,
+                notes_summary TEXT,
+                contact_name TEXT,
+                contact_email TEXT,
+                contact_linkedin TEXT,
+                location_override TEXT,
+                offer_compensation TEXT,
+                archived INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (job_id) REFERENCES jobs(id)
+            )",
+            [],
+        )?;
+        
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS application_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                application_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                event_date TEXT NOT NULL,
+                from_status TEXT,
+                to_status TEXT,
+                title TEXT,
+                details TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (application_id) REFERENCES applications(id)
+            )",
+            [],
+        )?;
+        
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                application_id INTEGER,
+                job_id INTEGER,
+                type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT,
+                format TEXT,
+                ai_payload TEXT,
+                ai_model TEXT,
+                source TEXT,
+                version INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (application_id) REFERENCES applications(id),
+                FOREIGN KEY (job_id) REFERENCES jobs(id)
+            )",
+            [],
+        )?;
+        
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ai_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cache_key TEXT NOT NULL UNIQUE,
+                cache_value TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT
+            )",
+            [],
+        )?;
+        
+        println!("Database schema initialized.");
+    }
+    
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = get_db_path();
     
-    if !db_path.exists() {
-        eprintln!("Error: Database not found at {}", db_path.display());
-        eprintln!("Please run the application first to initialize the database.");
-        std::process::exit(1);
+    // Create directory if it doesn't exist
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
-
+    
     let conn = Connection::open(&db_path)?;
+    
+    // Initialize database schema if needed
+    init_database_if_needed(&conn)?;
     
     // Clear existing data
     clear_database(&conn)?;

@@ -1,0 +1,137 @@
+.quick-switcher-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 2000;
+  animation: fadeInOverlay 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.quick-switcher-container {
+  position: fixed;
+  top: 20%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90%;
+  max-width: 600px;
+  background-color: white;
+  border-radius: 0.75rem;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  z-index: 2001;
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  animation: quickSwitcherSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+@keyframes quickSwitcherSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+.quick-switcher-header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.quick-switcher-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  font-size: 1.125rem;
+  color: #111827;
+  background: transparent;
+  font-family: inherit;
+}
+
+.quick-switcher-input::placeholder {
+  color: #9ca3af;
+}
+
+.quick-switcher-results {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 400px;
+  padding: 0.5rem;
+}
+
+.quick-switcher-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-bottom: 0.25rem;
+}
+
+.quick-switcher-item:hover,
+.quick-switcher-item.selected {
+  background-color: #f3f4f6;
+}
+
+.quick-switcher-item-content {
+  flex: 1;
+}
+
+.quick-switcher-item-label {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: #111827;
+  margin-bottom: 0.25rem;
+}
+
+.quick-switcher-item-description {
+  font-size: 0.8125rem;
+  color: #6b7280;
+}
+
+.quick-switcher-item-category {
+  font-size: 1rem;
+  color: #9ca3af;
+  margin-left: 1rem;
+}
+
+.quick-switcher-empty {
+  padding: 2rem;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 0.875rem;
+}
+
+.quick-switcher-footer {
+  padding: 0.75rem 1.5rem;
+  border-top: 1px solid #e5e7eb;
+  background-color: #f9fafb;
+}
+
+.quick-switcher-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.quick-switcher-hint kbd {
+  background-color: white;
+  border: 1px solid #d1d5db;
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  font-size: 0.6875rem;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+

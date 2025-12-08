@@ -2,6 +2,7 @@ use crate::ai::provider::AiProvider;
 use crate::ai::settings::{AiMode, CloudProvider, load_ai_settings};
 use crate::ai::local_provider::LocalProvider;
 use crate::ai::cloud_provider::CloudAiProvider;
+use crate::ai::hybrid_provider::HybridProvider;
 use std::sync::Arc;
 
 /// Provider resolver
@@ -9,6 +10,7 @@ use std::sync::Arc;
 pub enum ResolvedProvider {
     Local(Arc<LocalProvider>),
     Cloud(Arc<CloudAiProvider>),
+    Hybrid(Arc<HybridProvider>),
 }
 
 impl ResolvedProvider {
@@ -74,33 +76,16 @@ impl ResolvedProvider {
             }
             AiMode::Hybrid => {
                 log::info!("[ResolvedProvider] Hybrid mode selected");
-                // For hybrid mode, prefer cloud if configured, otherwise try local
-                if let Some(api_key) = &settings.api_key {
-                    let provider = settings.cloud_provider
-                        .unwrap_or(CloudProvider::OpenAI);
-                    let model_name = settings.model_name
-                        .unwrap_or_else(|| "gpt-4o-mini".to_string());
-                    
-                    log::info!("[ResolvedProvider] Hybrid: Using cloud provider (API key configured)");
-                    Ok(ResolvedProvider::Cloud(Arc::new(
-                        CloudAiProvider::new(provider, api_key.clone(), model_name)
-                    )))
-                } else if let Some(model_path_str) = &settings.local_model_path {
-                    let model_path = std::path::PathBuf::from(model_path_str);
-                    log::info!("[ResolvedProvider] Hybrid: Using local provider (no API key, model path configured)");
-                    if !model_path.exists() {
-                        let msg = format!("Model file not found at: {}. Please verify the path in Settings.", model_path.display());
-                        log::error!("[ResolvedProvider] {}", msg);
-                        return Err(msg);
-                    }
-                    Ok(ResolvedProvider::Local(Arc::new(
-                        LocalProvider::with_model_path(model_path)
-                    )))
-                } else {
-                    let msg = "Hybrid mode requires either a cloud API key or a local model path to be configured. Please go to Settings to configure one.";
-                    log::error!("[ResolvedProvider] {}", msg);
-                    Err(msg.to_string())
-                }
+                // Use HybridProvider which handles intelligent routing and fallback
+                // Prefer cloud if both are configured, otherwise use whichever is available
+                let prefer_cloud = settings.api_key.is_some() && settings.local_model_path.is_some();
+                let hybrid_provider = HybridProvider::new(prefer_cloud)
+                    .map_err(|e| {
+                        log::error!("[ResolvedProvider] Failed to create hybrid provider: {}", e);
+                        e
+                    })?;
+                log::info!("[ResolvedProvider] Hybrid provider initialized (prefer_cloud: {})", prefer_cloud);
+                Ok(ResolvedProvider::Hybrid(Arc::new(hybrid_provider)))
             }
         }
     }
@@ -110,6 +95,7 @@ impl ResolvedProvider {
         match self {
             ResolvedProvider::Local(provider) => provider.clone() as Arc<dyn AiProvider>,
             ResolvedProvider::Cloud(provider) => provider.clone() as Arc<dyn AiProvider>,
+            ResolvedProvider::Hybrid(provider) => provider.clone() as Arc<dyn AiProvider>,
         }
     }
 }

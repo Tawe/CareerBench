@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { InlineEditable } from "../components/InlineEditable";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
+import { showToast } from "../components/Toast";
+import { validate } from "../validation/utils";
+import { userProfileDataSchema } from "../validation/schemas";
 import "./Profile.css";
 
 interface UserProfile {
@@ -90,6 +95,7 @@ export default function Profile() {
   const [isSaving, setIsSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     loadProfile();
@@ -109,15 +115,134 @@ export default function Profile() {
     }
   }
 
+  function validateProfile(): boolean {
+    // Convert snake_case from backend to camelCase for validation
+    const dataForValidation = {
+      profile: data.profile ? {
+        id: data.profile.id,
+        fullName: data.profile.full_name,
+        headline: data.profile.headline,
+        location: data.profile.location,
+        summary: data.profile.summary,
+        currentRoleTitle: data.profile.current_role_title,
+        currentCompany: data.profile.current_company,
+        seniority: data.profile.seniority,
+        openToRoles: data.profile.open_to_roles,
+      } : null,
+      experience: data.experience.map(exp => ({
+        id: exp.id,
+        company: exp.company,
+        title: exp.title,
+        location: exp.location,
+        startDate: exp.start_date,
+        endDate: exp.end_date,
+        isCurrent: exp.is_current,
+        description: exp.description,
+        achievements: exp.achievements,
+        techStack: exp.tech_stack,
+      })),
+      skills: data.skills.map(skill => ({
+        id: skill.id,
+        name: skill.name,
+        category: skill.category,
+        selfRating: skill.self_rating,
+        priority: skill.priority as "Low" | "Medium" | "High" | undefined,
+        yearsExperience: skill.years_experience,
+        notes: skill.notes,
+      })),
+      education: data.education.map(edu => ({
+        id: edu.id,
+        institution: edu.institution,
+        degree: edu.degree,
+        fieldOfStudy: edu.field_of_study,
+        startDate: edu.start_date,
+        endDate: edu.end_date,
+        grade: edu.grade,
+        description: edu.description,
+      })),
+      certifications: data.certifications.map(cert => ({
+        id: cert.id,
+        name: cert.name,
+        issuingOrganization: cert.issuing_organization,
+        issueDate: cert.issue_date,
+        expirationDate: cert.expiration_date,
+        credentialId: cert.credential_id,
+        credentialUrl: cert.credential_url,
+      })),
+      portfolio: data.portfolio.map(item => ({
+        id: item.id,
+        title: item.title,
+        url: item.url,
+        description: item.description,
+        role: item.role,
+        techStack: item.tech_stack,
+        highlighted: item.highlighted,
+      })),
+    };
+    
+    // Use Zod validation
+    const result = validate(userProfileDataSchema, dataForValidation);
+    
+    if (!result.success && result.errors) {
+      // Convert camelCase errors back to snake_case for display
+      const convertedErrors: Record<string, string> = {};
+      Object.entries(result.errors).forEach(([key, value]) => {
+        // Convert field paths like "profile.fullName" to "profile.full_name"
+        const convertedKey = key
+          .replace(/fullName/g, 'full_name')
+          .replace(/currentRoleTitle/g, 'current_role_title')
+          .replace(/currentCompany/g, 'current_company')
+          .replace(/openToRoles/g, 'open_to_roles')
+          .replace(/createdAt/g, 'created_at')
+          .replace(/updatedAt/g, 'updated_at')
+          .replace(/startDate/g, 'start_date')
+          .replace(/endDate/g, 'end_date')
+          .replace(/isCurrent/g, 'is_current')
+          .replace(/techStack/g, 'tech_stack')
+          .replace(/fieldOfStudy/g, 'field_of_study')
+          .replace(/issuingOrganization/g, 'issuing_organization')
+          .replace(/issueDate/g, 'issue_date')
+          .replace(/expirationDate/g, 'expiration_date')
+          .replace(/credentialId/g, 'credential_id')
+          .replace(/credentialUrl/g, 'credential_url')
+          .replace(/selfRating/g, 'self_rating')
+          .replace(/yearsExperience/g, 'years_experience');
+        convertedErrors[convertedKey] = value;
+      });
+      setValidationErrors(convertedErrors);
+      return false;
+    }
+    
+    setValidationErrors({});
+    return true;
+  }
+
   async function saveProfile() {
+    // Validate before saving
+    if (!validateProfile()) {
+      setError("Please fix the validation errors before saving");
+      // Scroll to first error
+      const firstErrorField = document.querySelector('[data-error]');
+      if (firstErrorField) {
+        firstErrorField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      return;
+    }
+    
     setIsSaving(true);
     setError(null);
+    setValidationErrors({});
     try {
       const result = await invoke<UserProfileData>("save_user_profile_data", { data });
       setData(result);
       setIsDirty(false);
     } catch (err: any) {
-      setError(err?.message || "Failed to save profile");
+      const errorMessage = err?.message || "Failed to save profile";
+      setError(errorMessage);
+      // If it's a validation error from backend, try to parse it
+      if (errorMessage.includes("required") || errorMessage.includes("invalid")) {
+        setValidationErrors({ _general: errorMessage });
+      }
     } finally {
       setIsSaving(false);
     }
@@ -135,10 +260,96 @@ export default function Profile() {
     setIsDirty(true);
   }
 
+  async function handleImportResume() {
+    try {
+      // Open file picker using Tauri dialog plugin
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        multiple: false,
+        filters: [{
+          name: "Resume Files",
+          extensions: ["pdf", "txt", "docx"]
+        }],
+        title: "Select Resume/CV File"
+      });
+
+      if (!selected) {
+        // User cancelled
+        return;
+      }
+
+      // Handle both string (single file) and FileSelected (with path property) return types
+      const filePath = typeof selected === "string" ? selected : (selected as { path: string }).path;
+      
+      if (!filePath) {
+        showToast("No file selected", "info");
+        return;
+      }
+
+      showToast("Extracting text from resume...", "info");
+
+      // Extract text from resume
+      const parsed = await invoke<{ text: string; file_path: string }>("extract_resume_text", {
+        filePath
+      });
+
+      showToast("Extracting profile data with AI...", "info");
+
+      // Extract profile data using AI
+      try {
+        // Process with AI
+        setIsImporting(true);
+        try {
+          const extracted = await invoke<UserProfileData>("extract_profile_from_resume", {
+            resumeText: parsed.text
+          });
+
+          // Merge extracted data with existing data
+          setData((prev) => ({
+            profile: extracted.profile || prev.profile,
+            experience: [...prev.experience, ...extracted.experience],
+            skills: [...prev.skills, ...extracted.skills],
+            education: [...prev.education, ...extracted.education],
+            certifications: [...prev.certifications, ...extracted.certifications],
+            portfolio: [...prev.portfolio, ...extracted.portfolio],
+          }));
+          setIsDirty(true);
+          showToast("Profile imported successfully! Review and save your changes.", "success");
+          setShowImportModal(false);
+        } catch (aiErr: any) {
+          console.error("Error processing resume with AI:", aiErr);
+          setImportError(aiErr?.message || "Failed to process resume with AI.");
+          showToast(aiErr?.message || "Failed to process resume with AI.", "error");
+        } finally {
+          setIsImporting(false);
+        }
+      } catch (aiErr: any) {
+        // AI extraction might not be fully implemented yet
+        if (aiErr?.message?.includes("not yet fully implemented")) {
+          showToast("Text extracted, but AI extraction is not yet available. You can manually review the extracted text.", "warning");
+          // Show the extracted text in a modal or alert for user to review
+          console.log("Extracted text:", parsed.text);
+        } else {
+          throw aiErr;
+        }
+      }
+    } catch (err: any) {
+      showToast(err?.message || "Failed to import resume", "error");
+      console.error("Import error:", err);
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="profile">
-        <div className="loading">Loading profile...</div>
+        <div className="profile-header">
+          <LoadingSkeleton width="200px" height="2rem" />
+        </div>
+        <div className="profile-content content-constrained">
+          <LoadingSkeleton variant="card" className="profile-section" />
+          <LoadingSkeleton variant="card" className="profile-section" />
+          <LoadingSkeleton variant="card" className="profile-section" />
+        </div>
       </div>
     );
   }
@@ -148,6 +359,14 @@ export default function Profile() {
       <div className="profile-header">
         <h1>Profile</h1>
         <div className="profile-actions">
+          <button
+            onClick={handleImportResume}
+            className="import-button"
+            aria-label="Import profile from resume/CV"
+            title="Import profile from PDF or TXT resume file"
+          >
+            📄 Import Resume
+          </button>
           {isDirty && (
             <span className="unsaved-indicator">Unsaved changes</span>
           )}
@@ -155,6 +374,7 @@ export default function Profile() {
             onClick={saveProfile}
             disabled={!isDirty || isSaving}
             className="save-button"
+            aria-label={isSaving ? "Saving profile" : "Save profile changes"}
           >
             {isSaving ? "Saving..." : "Save"}
           </button>
@@ -164,12 +384,21 @@ export default function Profile() {
       {error && (
         <div className="error-banner">
           {error}
-          <button onClick={() => setError(null)}>×</button>
+          <button 
+            onClick={() => setError(null)}
+            aria-label="Dismiss error message"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
         </div>
       )}
 
       <div className="profile-content content-constrained">
-        <BasicInfoSection profile={data.profile} onUpdate={updateProfile} />
+        <BasicInfoSection 
+          profile={data.profile} 
+          onUpdate={updateProfile}
+          validationErrors={validationErrors}
+        />
 
         <ExperienceSection
           experience={data.experience}
@@ -177,6 +406,7 @@ export default function Profile() {
             setData((prev) => ({ ...prev, experience: exp }));
             setIsDirty(true);
           }}
+          validationErrors={validationErrors}
         />
 
         <SkillsSection
@@ -204,6 +434,7 @@ export default function Profile() {
             }));
             setIsDirty(true);
           }}
+          validationErrors={validationErrors}
         />
 
         <PortfolioSection
@@ -212,6 +443,7 @@ export default function Profile() {
             setData((prev) => ({ ...prev, portfolio }));
             setIsDirty(true);
           }}
+          validationErrors={validationErrors}
         />
 
         <CareerPreferencesSection
@@ -227,9 +459,11 @@ export default function Profile() {
 function BasicInfoSection({
   profile,
   onUpdate,
+  validationErrors = {},
 }: {
   profile?: UserProfile;
   onUpdate: (field: keyof UserProfile, value: string) => void;
+  validationErrors?: Record<string, string>;
 }) {
   return (
     <div className="profile-section">
@@ -244,21 +478,26 @@ function BasicInfoSection({
           <label>
             Full Name <span className="required">*</span>
           </label>
-          <input
-            type="text"
-            value={profile?.full_name || ""}
-            onChange={(e) => onUpdate("full_name", e.target.value)}
-            placeholder="John Doe"
-            required
-          />
+          <div style={{ position: "relative" }}>
+            <InlineEditable
+              value={profile?.full_name || ""}
+              onSave={(newValue) => onUpdate("full_name", newValue)}
+              placeholder="John Doe"
+              className={validationErrors.full_name ? "inline-editable-error" : ""}
+            />
+            {validationErrors.full_name && (
+              <span style={{ color: "#ef4444", fontSize: "0.875rem", marginTop: "0.25rem", display: "block" }}>
+                {validationErrors.full_name}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="form-group">
           <label>Location</label>
-          <input
-            type="text"
+          <InlineEditable
             value={profile?.location || ""}
-            onChange={(e) => onUpdate("location", e.target.value)}
+            onSave={(newValue) => onUpdate("location", newValue)}
             placeholder="San Francisco, CA"
           />
         </div>
@@ -297,7 +536,32 @@ function BasicInfoSection({
         </div>
 
         <div className="form-group full-width">
-          <label>Professional Summary</label>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+            <label>Professional Summary</label>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const summary = await invoke<string>("generate_profile_summary");
+                  onUpdate("summary", summary);
+                } catch (err: any) {
+                  showToast(err?.message || "Failed to generate summary", "error");
+                }
+              }}
+              aria-label="Generate professional summary with AI"
+              style={{
+                padding: "0.375rem 0.75rem",
+                backgroundColor: "#6366f1",
+                color: "white",
+                border: "none",
+                borderRadius: "0.375rem",
+                cursor: "pointer",
+                fontSize: "0.875rem"
+              }}
+            >
+              <span aria-hidden="true">✨</span> Generate with AI
+            </button>
+          </div>
           <textarea
             value={profile?.summary || ""}
             onChange={(e) => onUpdate("summary", e.target.value)}
@@ -370,9 +634,11 @@ function CareerPreferencesSection({
 function ExperienceSection({
   experience,
   onUpdate,
+  validationErrors = {},
 }: {
   experience: Experience[];
   onUpdate: (exp: Experience[]) => void;
+  validationErrors?: Record<string, string>;
 }) {
   const [editingIndex, setEditingIndex] = useState<number | "new" | null>(null);
   const [formData, setFormData] = useState<Experience>({
@@ -406,10 +672,12 @@ function ExperienceSection({
       });
       setEditingIndex("new");
     }
+    setLocalErrors({});
   }
 
   function cancelEdit() {
     setEditingIndex(null);
+    setLocalErrors({});
     setFormData({
       company: "",
       title: "",
@@ -423,11 +691,31 @@ function ExperienceSection({
     });
   }
 
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
+
   function saveExperience() {
-    if (!formData.company || !formData.title) {
-      alert("Company and Title are required");
+    const errors: Record<string, string> = {};
+    
+    if (!formData.company || formData.company.trim() === "") {
+      errors.company = "Company is required";
+    }
+    if (!formData.title || formData.title.trim() === "") {
+      errors.title = "Job title is required";
+    }
+    if (formData.start_date && formData.end_date && !formData.is_current) {
+      const start = new Date(formData.start_date);
+      const end = new Date(formData.end_date);
+      if (start > end) {
+        errors.dates = "End date must be after start date";
+      }
+    }
+    
+    if (Object.keys(errors).length > 0) {
+      setLocalErrors(errors);
       return;
     }
+    
+    setLocalErrors({});
 
     let updated = [...experience];
     if (editingIndex === "new") {
@@ -468,11 +756,20 @@ function ExperienceSection({
               <input
                 type="text"
                 value={formData.company}
-                onChange={(e) =>
-                  setFormData({ ...formData, company: e.target.value })
-                }
+                onChange={(e) => {
+                  setFormData({ ...formData, company: e.target.value });
+                  if (localErrors.company) setLocalErrors({ ...localErrors, company: "" });
+                }}
                 required
+                style={{
+                  borderColor: (localErrors.company || (editingIndex !== null && typeof editingIndex === "number" && validationErrors[`experience_${editingIndex}_company`])) ? "#ef4444" : undefined
+                }}
               />
+              {(localErrors.company || (editingIndex !== null && typeof editingIndex === "number" && validationErrors[`experience_${editingIndex}_company`])) && (
+                <span style={{ color: "#ef4444", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+                  {localErrors.company || validationErrors[`experience_${editingIndex}_company`]}
+                </span>
+              )}
             </div>
 
             <div className="form-group">
@@ -482,11 +779,20 @@ function ExperienceSection({
               <input
                 type="text"
                 value={formData.title}
-                onChange={(e) =>
-                  setFormData({ ...formData, title: e.target.value })
-                }
+                onChange={(e) => {
+                  setFormData({ ...formData, title: e.target.value });
+                  if (localErrors.title) setLocalErrors({ ...localErrors, title: "" });
+                }}
                 required
+                style={{
+                  borderColor: (localErrors.title || (editingIndex !== null && typeof editingIndex === "number" && validationErrors[`experience_${editingIndex}_title`])) ? "#ef4444" : undefined
+                }}
               />
+              {(localErrors.title || (editingIndex !== null && typeof editingIndex === "number" && validationErrors[`experience_${editingIndex}_title`])) && (
+                <span style={{ color: "#ef4444", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+                  {localErrors.title || validationErrors[`experience_${editingIndex}_title`]}
+                </span>
+              )}
             </div>
 
             <div className="form-group">
@@ -525,6 +831,11 @@ function ExperienceSection({
                 }}
                 disabled={formData.is_current}
               />
+              {localErrors.dates && (
+                <span style={{ color: "#ef4444", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+                  {localErrors.dates}
+                </span>
+              )}
             </div>
 
             <div className="form-group">
@@ -638,6 +949,7 @@ function ExperienceSection({
                   <button
                     onClick={() => startEdit(exp, index)}
                     className="edit-button"
+                    aria-label={`Edit experience at ${exp.company}`}
                   >
                     Edit
                   </button>
@@ -645,6 +957,7 @@ function ExperienceSection({
                     onClick={() => deleteExperience(index)}
                     className="delete-button"
                     type="button"
+                    aria-label={`Delete experience at ${exp.company}`}
                   >
                     Delete
                   </button>
@@ -761,11 +1074,15 @@ function SkillsSection({
     setLinkedPortfolioIds([]);
   }
 
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
+
   function saveSkill() {
     if (!formData.name.trim()) {
-      alert("Skill name is required");
+      setLocalErrors({ name: "Skill name is required" });
       return;
     }
+    
+    setLocalErrors({});
 
     const links: SkillLinks = {
       experienceIds: linkedExperienceIds,
@@ -814,6 +1131,37 @@ function SkillsSection({
     <div className="profile-section">
       <div className="section-header">
         <h2>Skills</h2>
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+                  const extractedSkills = await invoke<string[]>("extract_skills_from_experience");
+              // Add extracted skills that don't already exist
+              const existingSkillNames = new Set(skills.map(s => s.name.toLowerCase()));
+              const newSkills = extractedSkills
+                .filter(skill => !existingSkillNames.has(skill.toLowerCase()))
+                .map(name => ({ name }));
+              if (newSkills.length > 0) {
+                onUpdate([...skills, ...newSkills]);
+              } else {
+                showToast("No new skills found to add.", "info");
+              }
+            } catch (err: any) {
+              showToast(err?.message || "Failed to extract skills", "error");
+            }
+          }}
+          style={{
+            padding: "0.375rem 0.75rem",
+            backgroundColor: "#6366f1",
+            color: "white",
+            border: "none",
+            borderRadius: "0.375rem",
+            cursor: "pointer",
+            fontSize: "0.875rem"
+          }}
+        >
+          ✨ Extract from Experience
+        </button>
       </div>
 
       <div className="quick-add">
@@ -841,11 +1189,20 @@ function SkillsSection({
               <input
                 type="text"
                 value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
+                onChange={(e) => {
+                  setFormData({ ...formData, name: e.target.value });
+                  if (localErrors.name) setLocalErrors({ ...localErrors, name: "" });
+                }}
                 required
+                style={{
+                  borderColor: localErrors.name ? "#ef4444" : undefined
+                }}
               />
+              {localErrors.name && (
+                <span style={{ color: "#ef4444", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+                  {localErrors.name}
+                </span>
+              )}
             </div>
 
             <div className="form-group full-width">
@@ -968,7 +1325,17 @@ function SkillsSection({
                 data-skill-name={skill.name}
               >
                 <div className="skill-info">
-                  <span className="skill-name">{skill.name}</span>
+                  <InlineEditable
+                    value={skill.name}
+                    onSave={async (newName) => {
+                      if (!newName.trim()) return;
+                      const updated = [...skills];
+                      updated[index] = { ...skill, name: newName.trim() };
+                      onUpdate(updated);
+                    }}
+                    placeholder="Skill name"
+                    className="skill-name-inline"
+                  />
                   <div className="skill-links">
                     {expCount > 0 && (
                       <span>Experience ({expCount})</span>
@@ -1018,10 +1385,12 @@ function EducationSection({
   education,
   certifications,
   onUpdate,
+  validationErrors = {},
 }: {
   education: Education[];
   certifications: Certification[];
   onUpdate: (edu: Education[], certs: Certification[]) => void;
+  validationErrors?: Record<string, string>;
 }) {
   const [activeTab, setActiveTab] = useState<"education" | "certifications">("education");
   const [editingEduId, setEditingEduId] = useState<number | "new" | null>(null);
@@ -1043,6 +1412,7 @@ function EducationSection({
     credential_id: "",
     credential_url: "",
   });
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
 
   // Education handlers
   function startEditEdu(edu?: Education) {
@@ -1061,13 +1431,28 @@ function EducationSection({
       });
       setEditingEduId("new");
     }
+    setLocalErrors({});
   }
 
   function saveEducation() {
+    const errors: Record<string, string> = {};
     if (!eduFormData.institution.trim()) {
-      alert("Institution is required");
+      errors.institution = "Institution is required";
+    }
+    if (eduFormData.start_date && eduFormData.end_date) {
+      const start = new Date(eduFormData.start_date);
+      const end = new Date(eduFormData.end_date);
+      if (start > end) {
+        errors.dates = "End date must be after start date";
+      }
+    }
+    
+    if (Object.keys(errors).length > 0) {
+      setLocalErrors(errors);
       return;
     }
+    
+    setLocalErrors({});
     let updated = [...education];
     if (editingEduId === "new") {
       updated.push({ ...eduFormData });
@@ -1103,13 +1488,28 @@ function EducationSection({
       });
       setEditingCertId("new");
     }
+    setLocalErrors({});
   }
 
   function saveCertification() {
+    const errors: Record<string, string> = {};
     if (!certFormData.name.trim()) {
-      alert("Certification name is required");
+      errors.name = "Certification name is required";
+    }
+    if (certFormData.credential_url && certFormData.credential_url.trim() !== "") {
+      try {
+        new URL(certFormData.credential_url);
+      } catch {
+        errors.credential_url = "Please enter a valid URL";
+      }
+    }
+    
+    if (Object.keys(errors).length > 0) {
+      setLocalErrors(errors);
       return;
     }
+    
+    setLocalErrors({});
     let updated = [...certifications];
     if (editingCertId === "new") {
       updated.push({ ...certFormData });
@@ -1151,7 +1551,11 @@ function EducationSection({
 
       {activeTab === "education" && (
         <div>
-          <button onClick={() => startEditEdu()} className="add-button">
+          <button 
+            onClick={() => startEditEdu()} 
+            className="add-button"
+            aria-label="Add new education entry"
+          >
             + Add Education
           </button>
 
@@ -1166,11 +1570,20 @@ function EducationSection({
                   <input
                     type="text"
                     value={eduFormData.institution}
-                    onChange={(e) =>
-                      setEduFormData({ ...eduFormData, institution: e.target.value })
-                    }
+                    onChange={(e) => {
+                      setEduFormData({ ...eduFormData, institution: e.target.value });
+                      if (localErrors.institution) setLocalErrors({ ...localErrors, institution: "" });
+                    }}
                     required
+                    style={{
+                      borderColor: localErrors.institution ? "#ef4444" : undefined
+                    }}
                   />
+                  {localErrors.institution && (
+                    <span style={{ color: "#ef4444", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+                      {localErrors.institution}
+                    </span>
+                  )}
                 </div>
                 <div className="form-group">
                   <label>Degree</label>
@@ -1263,12 +1676,17 @@ function EducationSection({
                       )}
                     </div>
                     <div className="item-actions">
-                      <button onClick={() => startEditEdu(edu)} className="edit-button">
+                      <button 
+                        onClick={() => startEditEdu(edu)} 
+                        className="edit-button"
+                        aria-label={`Edit education at ${edu.institution}`}
+                      >
                         Edit
                       </button>
                       <button
                         onClick={() => edu.id && deleteEducation(edu.id)}
                         className="delete-button"
+                        aria-label={`Delete education at ${edu.institution}`}
                       >
                         Delete
                       </button>
@@ -1300,11 +1718,20 @@ function EducationSection({
                   <input
                     type="text"
                     value={certFormData.name}
-                    onChange={(e) =>
-                      setCertFormData({ ...certFormData, name: e.target.value })
-                    }
+                    onChange={(e) => {
+                      setCertFormData({ ...certFormData, name: e.target.value });
+                      if (localErrors.name) setLocalErrors({ ...localErrors, name: "" });
+                    }}
                     required
+                    style={{
+                      borderColor: localErrors.name ? "#ef4444" : undefined
+                    }}
                   />
+                  {localErrors.name && (
+                    <span style={{ color: "#ef4444", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+                      {localErrors.name}
+                    </span>
+                  )}
                 </div>
                 <div className="form-group">
                   <label>Issuing Organization</label>
@@ -1417,9 +1844,11 @@ function EducationSection({
 function PortfolioSection({
   portfolio,
   onUpdate,
+  validationErrors = {},
 }: {
   portfolio: PortfolioItem[];
   onUpdate: (portfolio: PortfolioItem[]) => void;
+  validationErrors?: Record<string, string>;
 }) {
   const [editingId, setEditingId] = useState<number | "new" | null>(null);
   const [formData, setFormData] = useState<PortfolioItem>({
@@ -1446,17 +1875,35 @@ function PortfolioSection({
       });
       setEditingId("new");
     }
+    setLocalErrors({});
   }
 
   function cancelEdit() {
     setEditingId(null);
+    setLocalErrors({});
   }
 
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
+
   function savePortfolioItem() {
+    const errors: Record<string, string> = {};
     if (!formData.title.trim()) {
-      alert("Title is required");
+      errors.title = "Title is required";
+    }
+    if (formData.url && formData.url.trim() !== "") {
+      try {
+        new URL(formData.url);
+      } catch {
+        errors.url = "Please enter a valid URL";
+      }
+    }
+    
+    if (Object.keys(errors).length > 0) {
+      setLocalErrors(errors);
       return;
     }
+    
+    setLocalErrors({});
     let updated = [...portfolio];
     if (editingId === "new") {
       updated.push({ ...formData });
@@ -1480,7 +1927,11 @@ function PortfolioSection({
     <div className="profile-section">
       <div className="section-header">
         <h2>Portfolio</h2>
-        <button onClick={() => startEdit()} className="add-button">
+        <button 
+          onClick={() => startEdit()} 
+          className="add-button"
+          aria-label="Add new portfolio item"
+        >
           + Add Portfolio Item
         </button>
       </div>
@@ -1496,21 +1947,39 @@ function PortfolioSection({
               <input
                 type="text"
                 value={formData.title}
-                onChange={(e) =>
-                  setFormData({ ...formData, title: e.target.value })
-                }
+                onChange={(e) => {
+                  setFormData({ ...formData, title: e.target.value });
+                  if (localErrors.title) setLocalErrors({ ...localErrors, title: "" });
+                }}
                 required
+                style={{
+                  borderColor: localErrors.title ? "#ef4444" : undefined
+                }}
               />
+              {localErrors.title && (
+                <span style={{ color: "#ef4444", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+                  {localErrors.title}
+                </span>
+              )}
             </div>
             <div className="form-group">
               <label>URL</label>
               <input
                 type="url"
                 value={formData.url || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, url: e.target.value })
-                }
+                onChange={(e) => {
+                  setFormData({ ...formData, url: e.target.value });
+                  if (localErrors.url) setLocalErrors({ ...localErrors, url: "" });
+                }}
+                style={{
+                  borderColor: localErrors.url ? "#ef4444" : undefined
+                }}
               />
+              {localErrors.url && (
+                <span style={{ color: "#ef4444", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+                  {localErrors.url}
+                </span>
+              )}
             </div>
             <div className="form-group">
               <label>Role</label>
@@ -1546,7 +2015,41 @@ function PortfolioSection({
               </label>
             </div>
             <div className="form-group full-width">
-              <label>Description</label>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                <label>Description</label>
+                {formData.description && formData.id && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const rewritten = await invoke<string>("rewrite_portfolio_description", {
+                          portfolioId: formData.id,
+                          description: formData.description
+                        });
+                        setFormData({ ...formData, description: rewritten });
+                      } catch (err: any) {
+                        // Show error in a non-blocking way
+                        const message = document.createElement("div");
+                        message.textContent = err?.message || "Failed to rewrite description";
+                        message.style.cssText = "position: fixed; top: 20px; right: 20px; background: #ef4444; color: white; padding: 1rem; border-radius: 0.5rem; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.1);";
+                        document.body.appendChild(message);
+                        setTimeout(() => message.remove(), 5000);
+                      }
+                    }}
+                    style={{
+                      padding: "0.375rem 0.75rem",
+                      backgroundColor: "#6366f1",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "0.375rem",
+                      cursor: "pointer",
+                      fontSize: "0.875rem"
+                    }}
+                  >
+                    ✨ Rewrite with AI
+                  </button>
+                )}
+              </div>
               <textarea
                 value={formData.description || ""}
                 onChange={(e) =>

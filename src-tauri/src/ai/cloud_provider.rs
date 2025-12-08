@@ -2,9 +2,13 @@ use crate::ai::provider::AiProvider;
 use crate::ai::types::*;
 use crate::ai::errors::AiProviderError;
 use crate::ai::settings::CloudProvider;
+use crate::ai::retry::{retry_with_backoff, RetryConfig};
+use crate::ai::rate_limiter::RateLimiter;
+use crate::ai::validation::{validate_parsed_job, validate_resume_suggestions, validate_cover_letter, validate_skill_suggestions};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use reqwest::Client;
+use std::sync::Arc;
 
 /// Cloud AI Provider
 /// Supports multiple cloud providers (OpenAI, Anthropic, etc.)
@@ -13,76 +17,199 @@ pub struct CloudAiProvider {
     api_key: String,
     model_name: String,
     client: Client,
+    rate_limiter: Arc<RateLimiter>,
 }
 
 impl CloudAiProvider {
     pub fn new(provider: CloudProvider, api_key: String, model_name: String) -> Self {
+        // Create rate limiter based on provider
+        let rate_limiter = match provider {
+            CloudProvider::OpenAI => RateLimiter::openai_default(),
+            CloudProvider::Anthropic => RateLimiter::anthropic_default(),
+        };
+        
         Self {
             provider,
             api_key,
             model_name,
             client: Client::new(),
+            rate_limiter: Arc::new(rate_limiter),
         }
     }
     
-    async fn call_openai(&self, system_prompt: &str, user_prompt: &str) -> Result<Value, AiProviderError> {
-        let url = "https://api.openai.com/v1/chat/completions";
+    async fn call_anthropic(&self, system_prompt: &str, user_prompt: &str) -> Result<Value, AiProviderError> {
+        // Acquire rate limit token before making the request
+        self.rate_limiter.acquire().await;
         
-        let response = self.client
-            .post(url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&json!({
-                "model": self.model_name,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": user_prompt
+        let url = "https://api.anthropic.com/v1/messages";
+        let client = &self.client;
+        let api_key = &self.api_key;
+        let model_name = &self.model_name;
+        
+        // Use retry logic for the API call
+        let retry_config = RetryConfig {
+            max_retries: 3,
+            initial_delay_ms: 500,
+            max_delay_ms: 10000,
+            backoff_multiplier: 2.0,
+        };
+        
+        retry_with_backoff(
+            || {
+                let client = client.clone();
+                let url = url.to_string();
+                let api_key = api_key.clone();
+                let model_name = model_name.clone();
+                let system_prompt = system_prompt.to_string();
+                let user_prompt = user_prompt.to_string();
+                
+                async move {
+                    let response = client
+                        .post(&url)
+                        .header("x-api-key", api_key)
+                        .header("anthropic-version", "2023-06-01")
+                        .header("Content-Type", "application/json")
+                        .json(&json!({
+                            "model": model_name,
+                            "max_tokens": 4096,
+                            "system": system_prompt,
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": user_prompt
+                                }
+                            ],
+                            "temperature": 0.3
+                        }))
+                        .send()
+                        .await
+                        .map_err(|e| AiProviderError::NetworkError(e.to_string()))?;
+                    
+                    if response.status() == 401 {
+                        return Err(AiProviderError::InvalidApiKey);
                     }
-                ],
-                "temperature": 0.3, // Lower temperature for more deterministic output
-                "response_format": {
-                    "type": "json_object"
+                    
+                    if response.status() == 429 {
+                        return Err(AiProviderError::RateLimitExceeded);
+                    }
+                    
+                    if !response.status().is_success() {
+                        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                        return Err(AiProviderError::NetworkError(format!("API error: {}", error_text)));
+                    }
+                    
+                    let json_response: Value = response
+                        .json()
+                        .await
+                        .map_err(|e| AiProviderError::InvalidResponse(e.to_string()))?;
+                    
+                    // Extract content from Anthropic response format
+                    // Anthropic returns: { "content": [{"type": "text", "text": "..."}] }
+                    let content = json_response
+                        .get("content")
+                        .and_then(|c| c.as_array())
+                        .and_then(|arr| arr.get(0))
+                        .and_then(|item| item.get("text"))
+                        .and_then(|t| t.as_str())
+                        .ok_or_else(|| AiProviderError::InvalidResponse("Missing content in response".to_string()))?;
+                    
+                    // Parse the JSON content
+                    serde_json::from_str(content)
+                        .map_err(|e| AiProviderError::InvalidResponse(format!("Failed to parse JSON: {}", e)))
                 }
-            }))
-            .send()
-            .await
-            .map_err(|e| AiProviderError::NetworkError(e.to_string()))?;
+            },
+            retry_config,
+        )
+        .await
+    }
+    
+    async fn call_openai(&self, system_prompt: &str, user_prompt: &str) -> Result<Value, AiProviderError> {
+        // Acquire rate limit token before making the request
+        self.rate_limiter.acquire().await;
         
-        if response.status() == 401 {
-            return Err(AiProviderError::InvalidApiKey);
-        }
+        let url = "https://api.openai.com/v1/chat/completions";
+        let client = &self.client;
+        let api_key = &self.api_key;
+        let model_name = &self.model_name;
         
-        if response.status() == 429 {
-            return Err(AiProviderError::RateLimitExceeded);
-        }
+        // Use retry logic for the API call
+        let retry_config = RetryConfig {
+            max_retries: 3,
+            initial_delay_ms: 500,
+            max_delay_ms: 10000,
+            backoff_multiplier: 2.0,
+        };
         
-        if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(AiProviderError::NetworkError(format!("API error: {}", error_text)));
-        }
-        
-        let json_response: Value = response
-            .json()
-            .await
-            .map_err(|e| AiProviderError::InvalidResponse(e.to_string()))?;
-        
-        // Extract content from OpenAI response format
-        let content = json_response
-            .get("choices")
-            .and_then(|c| c.get(0))
-            .and_then(|c| c.get("message"))
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_str())
-            .ok_or_else(|| AiProviderError::InvalidResponse("Missing content in response".to_string()))?;
-        
-        // Parse the JSON content
-        serde_json::from_str(content)
-            .map_err(|e| AiProviderError::InvalidResponse(format!("Failed to parse JSON: {}", e)))
+        retry_with_backoff(
+            || {
+                let client = client.clone();
+                let url = url.to_string();
+                let api_key = api_key.clone();
+                let model_name = model_name.clone();
+                let system_prompt = system_prompt.to_string();
+                let user_prompt = user_prompt.to_string();
+                
+                async move {
+                    let response = client
+                        .post(&url)
+                        .header("Authorization", format!("Bearer {}", api_key))
+                        .header("Content-Type", "application/json")
+                        .json(&json!({
+                            "model": model_name,
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": system_prompt
+                                },
+                                {
+                                    "role": "user",
+                                    "content": user_prompt
+                                }
+                            ],
+                            "temperature": 0.3, // Lower temperature for more deterministic output
+                            "response_format": {
+                                "type": "json_object"
+                            }
+                        }))
+                        .send()
+                        .await
+                        .map_err(|e| AiProviderError::NetworkError(e.to_string()))?;
+                    
+                    if response.status() == 401 {
+                        return Err(AiProviderError::InvalidApiKey);
+                    }
+                    
+                    if response.status() == 429 {
+                        return Err(AiProviderError::RateLimitExceeded);
+                    }
+                    
+                    if !response.status().is_success() {
+                        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                        return Err(AiProviderError::NetworkError(format!("API error: {}", error_text)));
+                    }
+                    
+                    let json_response: Value = response
+                        .json()
+                        .await
+                        .map_err(|e| AiProviderError::InvalidResponse(e.to_string()))?;
+                    
+                    // Extract content from OpenAI response format
+                    let content = json_response
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c| c.get("message"))
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_str())
+                        .ok_or_else(|| AiProviderError::InvalidResponse("Missing content in response".to_string()))?;
+                    
+                    // Parse the JSON content
+                    serde_json::from_str(content)
+                        .map_err(|e| AiProviderError::InvalidResponse(format!("Failed to parse JSON: {}", e)))
+                }
+            },
+            retry_config,
+        )
+        .await
     }
     
     fn build_resume_system_prompt() -> String {
@@ -134,17 +261,17 @@ impl AiProvider for CloudAiProvider {
             input.job_description
         );
         
-        match self.provider {
+        let json_response = match self.provider {
             CloudProvider::OpenAI => {
-                let json_response = self.call_openai(&system_prompt, &user_prompt).await?;
-                serde_json::from_value(json_response)
-                    .map_err(|e| AiProviderError::ValidationError(format!("Failed to deserialize resume suggestions: {}", e)))
+                self.call_openai(&system_prompt, &user_prompt).await?
             }
             CloudProvider::Anthropic => {
-                // TODO: Implement Anthropic API
-                Err(AiProviderError::Unknown("Anthropic provider not yet implemented".to_string()))
+                self.call_anthropic(&system_prompt, &user_prompt).await?
             }
-        }
+        };
+        
+        // Validate response using validation module
+        validate_resume_suggestions(&json_response)
     }
     
     async fn generate_cover_letter(&self, input: CoverLetterInput) -> Result<CoverLetter, AiProviderError> {
@@ -156,16 +283,17 @@ impl AiProvider for CloudAiProvider {
             input.company_name.as_deref().unwrap_or("the company")
         );
         
-        match self.provider {
+        let json_response = match self.provider {
             CloudProvider::OpenAI => {
-                let json_response = self.call_openai(&system_prompt, &user_prompt).await?;
-                serde_json::from_value(json_response)
-                    .map_err(|e| AiProviderError::ValidationError(format!("Failed to deserialize cover letter: {}", e)))
+                self.call_openai(&system_prompt, &user_prompt).await?
             }
             CloudProvider::Anthropic => {
-                Err(AiProviderError::Unknown("Anthropic provider not yet implemented".to_string()))
+                self.call_anthropic(&system_prompt, &user_prompt).await?
             }
-        }
+        };
+        
+        // Validate response using validation module
+        validate_cover_letter(&json_response)
     }
     
     async fn generate_skill_suggestions(&self, input: SkillSuggestionsInput) -> Result<SkillSuggestions, AiProviderError> {
@@ -176,16 +304,17 @@ impl AiProvider for CloudAiProvider {
             input.job_description
         );
         
-        match self.provider {
+        let json_response = match self.provider {
             CloudProvider::OpenAI => {
-                let json_response = self.call_openai(&system_prompt, &user_prompt).await?;
-                serde_json::from_value(json_response)
-                    .map_err(|e| AiProviderError::ValidationError(format!("Failed to deserialize skill suggestions: {}", e)))
+                self.call_openai(&system_prompt, &user_prompt).await?
             }
             CloudProvider::Anthropic => {
-                Err(AiProviderError::Unknown("Anthropic provider not yet implemented".to_string()))
+                self.call_anthropic(&system_prompt, &user_prompt).await?
             }
-        }
+        };
+        
+        // Validate response using validation module
+        validate_skill_suggestions(&json_response)
     }
     
     async fn parse_job(&self, input: JobParsingInput) -> Result<ParsedJobOutput, AiProviderError> {
@@ -195,15 +324,50 @@ impl AiProvider for CloudAiProvider {
             input.job_description
         );
         
-        match self.provider {
+        let json_response = match self.provider {
             CloudProvider::OpenAI => {
-                let json_response = self.call_openai(&system_prompt, &user_prompt).await?;
-                serde_json::from_value(json_response)
-                    .map_err(|e| AiProviderError::ValidationError(format!("Failed to deserialize parsed job: {}", e)))
+                self.call_openai(&system_prompt, &user_prompt).await?
             }
             CloudProvider::Anthropic => {
-                Err(AiProviderError::Unknown("Anthropic provider not yet implemented".to_string()))
+                self.call_anthropic(&system_prompt, &user_prompt).await?
             }
+        };
+        
+        // Validate response using validation module
+        validate_parsed_job(&json_response)
+    }
+    
+    async fn call_llm(&self, system_prompt: Option<&str>, user_prompt: &str) -> Result<String, AiProviderError> {
+        let system = system_prompt.unwrap_or("You are a helpful AI assistant. Always respond with valid JSON when requested.");
+        
+        let json_response = match self.provider {
+            CloudProvider::OpenAI => {
+                self.call_openai(system, user_prompt).await?
+            }
+            CloudProvider::Anthropic => {
+                self.call_anthropic(system, user_prompt).await?
+            }
+        };
+        
+        // Extract text content from JSON response
+        // The response might be a JSON object with a "content" field, or just a string
+        if let Some(content) = json_response.get("content").and_then(|v| v.as_str()) {
+            Ok(content.to_string())
+        } else if let Some(text) = json_response.as_str() {
+            Ok(text.to_string())
+        } else {
+            // Try to extract from common response formats
+            if let Some(choices) = json_response.get("choices").and_then(|c| c.as_array()) {
+                if let Some(first) = choices.first() {
+                    if let Some(content) = first.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()) {
+                        return Ok(content.to_string());
+                    }
+                }
+            }
+            
+            // Fallback: serialize the whole response as JSON string
+            serde_json::to_string(&json_response)
+                .map_err(|e| AiProviderError::InvalidResponse(format!("Failed to serialize response: {}", e)))
         }
     }
 }

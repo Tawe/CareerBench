@@ -1,4 +1,5 @@
 use crate::db::get_connection;
+use crate::errors::CareerBenchError;
 use chrono::Utc;
 use rusqlite;
 use serde::{Deserialize, Serialize};
@@ -44,7 +45,8 @@ pub struct DashboardData {
 
 #[tauri::command]
 pub async fn get_dashboard_data() -> Result<DashboardData, String> {
-    let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
+    let conn = get_connection()
+        .map_err(|e| CareerBenchError::from(e).to_string_for_tauri())?;
 
     // KPIs
     let total_jobs: i64 = conn
@@ -1028,7 +1030,23 @@ pub async fn parse_job_with_ai(job_id: i64) -> Result<ParsedJob, String> {
     let parsed_output = provider.as_provider()
         .parse_job(parsing_input)
         .await
-        .map_err(|e| format!("AI parsing failed: {}", e))?;
+        .map_err(|e| {
+            // Convert AI provider error to user-friendly message
+            use crate::ai::error_messages::get_short_error_message;
+            let error_string = e.to_string();
+            // Check error patterns and convert to appropriate AiProviderError
+            if error_string.contains("Invalid API key") || error_string.contains("InvalidApiKey") || error_string.contains("401") {
+                get_short_error_message(&crate::ai::errors::AiProviderError::InvalidApiKey)
+            } else if error_string.contains("Rate limit") || error_string.contains("RateLimitExceeded") || error_string.contains("429") {
+                get_short_error_message(&crate::ai::errors::AiProviderError::RateLimitExceeded)
+            } else if error_string.contains("Network error") || error_string.contains("NetworkError") {
+                get_short_error_message(&crate::ai::errors::AiProviderError::NetworkError(error_string.clone()))
+            } else if error_string.contains("Invalid response") || error_string.contains("InvalidResponse") {
+                get_short_error_message(&crate::ai::errors::AiProviderError::InvalidResponse(error_string.clone()))
+            } else {
+                format!("AI parsing failed: {}", error_string)
+            }
+        })?;
     
     // Convert ParsedJobOutput to ParsedJob (they have the same structure)
     let parsed = ParsedJob {
@@ -2245,6 +2263,188 @@ pub fn render_letter_to_text(letter: &GeneratedLetter) -> String {
     output
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_date() {
+        // Test YYYY-MM format
+        assert_eq!(format_date("2024-01"), "Jan 2024");
+        assert_eq!(format_date("2023-12"), "Dec 2023");
+        assert_eq!(format_date("2022-06"), "Jun 2022");
+        
+        // Test edge cases
+        assert_eq!(format_date("2024-13"), "13 2024"); // Invalid month
+        assert_eq!(format_date("2024"), "2024"); // Too short
+        assert_eq!(format_date(""), ""); // Empty string
+        assert_eq!(format_date("invalid"), "invalid"); // Invalid format
+    }
+
+    #[test]
+    fn test_render_resume_to_text() {
+        let resume = GeneratedResume {
+            summary: Some("Test summary".to_string()),
+            headline: Some("Test Headline".to_string()),
+            sections: vec![
+                ResumeSection {
+                    title: "Experience".to_string(),
+                    items: vec![
+                        ResumeSectionItem {
+                            heading: "Software Engineer".to_string(),
+                            subheading: Some("2020-2024".to_string()),
+                            bullets: vec![
+                                "Built amazing features".to_string(),
+                                "Led a team".to_string(),
+                            ],
+                        },
+                    ],
+                },
+                ResumeSection {
+                    title: "Skills".to_string(),
+                    items: vec![
+                        ResumeSectionItem {
+                            heading: "Programming Languages".to_string(),
+                            subheading: None,
+                            bullets: vec!["Rust, TypeScript".to_string()],
+                        },
+                    ],
+                },
+            ],
+            highlights: vec![],
+        };
+
+        let text = render_resume_to_text(&resume);
+        
+        // Check that all components are present
+        assert!(text.contains("Test Headline"));
+        assert!(text.contains("Test summary"));
+        assert!(text.contains("## Experience"));
+        assert!(text.contains("### Software Engineer"));
+        assert!(text.contains("2020-2024"));
+        assert!(text.contains("- Built amazing features"));
+        assert!(text.contains("- Led a team"));
+        assert!(text.contains("## Skills"));
+        assert!(text.contains("### Programming Languages"));
+        assert!(text.contains("- Rust, TypeScript"));
+    }
+
+    #[test]
+    fn test_render_resume_to_text_minimal() {
+        // Test with minimal data
+        let resume = GeneratedResume {
+            summary: None,
+            headline: None,
+            sections: vec![],
+            highlights: vec![],
+        };
+
+        let text = render_resume_to_text(&resume);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_render_letter_to_text() {
+        let letter = GeneratedLetter {
+            subject: Some("Application for Software Engineer".to_string()),
+            greeting: Some("Dear Hiring Manager,".to_string()),
+            body_paragraphs: vec![
+                "First paragraph".to_string(),
+                "Second paragraph".to_string(),
+            ],
+            closing: Some("Best regards,".to_string()),
+            signature: Some("John Doe".to_string()),
+        };
+
+        let text = render_letter_to_text(&letter);
+        
+        // Check that all components are present
+        assert!(text.contains("Subject: Application for Software Engineer"));
+        assert!(text.contains("Dear Hiring Manager,"));
+        assert!(text.contains("First paragraph"));
+        assert!(text.contains("Second paragraph"));
+        assert!(text.contains("Best regards,"));
+        assert!(text.contains("John Doe"));
+    }
+
+    #[test]
+    fn test_render_letter_to_text_minimal() {
+        // Test with minimal data
+        let letter = GeneratedLetter {
+            subject: None,
+            greeting: None,
+            body_paragraphs: vec![],
+            closing: None,
+            signature: None,
+        };
+
+        let text = render_letter_to_text(&letter);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_user_profile_serialization_roundtrip() {
+        // Ensure camelCase JSON maps correctly and roundtrips
+        let json = serde_json::json!({
+            "id": 1,
+            "full_name": "Test User",
+            "headline": "Engineer",
+            "location": "Remote",
+            "summary": "Summary",
+            "current_role_title": "Senior Engineer",
+            "current_company": "Example Co",
+            "seniority": "Senior",
+            "open_to_roles": "Backend",
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-02T00:00:00Z"
+        });
+
+        let profile: UserProfile = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(profile.full_name, "Test User");
+        assert_eq!(profile.headline.as_deref(), Some("Engineer"));
+
+        let serialized = serde_json::to_value(&profile).unwrap();
+        // Check snake_case keys are preserved
+        assert!(serialized.get("full_name").is_some());
+        assert_eq!(serialized.get("full_name").unwrap(), "Test User");
+    }
+
+    #[test]
+    fn test_application_serialization() {
+        // Ensure Application serializes/deserializes without losing fields
+        let app = Application {
+            id: Some(5),
+            job_id: 10,
+            status: "Applied".to_string(),
+            channel: Some("Referral".to_string()),
+            priority: Some("High".to_string()),
+            date_saved: "2024-01-01T00:00:00Z".to_string(),
+            date_applied: Some("2024-01-02T00:00:00Z".to_string()),
+            last_activity_date: Some("2024-01-03T00:00:00Z".to_string()),
+            next_action_date: Some("2024-01-10".to_string()),
+            next_action_note: Some("Follow up".to_string()),
+            notes_summary: Some("Summary".to_string()),
+            contact_name: Some("Hiring Manager".to_string()),
+            contact_email: Some("hm@example.com".to_string()),
+            contact_linkedin: Some("linkedin.com/hm".to_string()),
+            location_override: Some("Remote".to_string()),
+            offer_compensation: Some("150k".to_string()),
+            archived: false,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-03T00:00:00Z".to_string(),
+        };
+
+        let serialized = serde_json::to_value(&app).unwrap();
+        assert_eq!(serialized.get("status").unwrap(), "Applied");
+        assert_eq!(serialized.get("channel").unwrap(), "Referral");
+
+        let deserialized: Application = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized.id, Some(5));
+        assert_eq!(deserialized.status, "Applied");
+        assert_eq!(deserialized.contact_email.as_deref(), Some("hm@example.com"));
+    }
+}
+
 // ============================================================================
 // AI Provider Commands
 // ============================================================================
@@ -2302,6 +2502,27 @@ pub async fn get_ai_settings() -> Result<AiSettings, String> {
 pub async fn save_ai_settings(settings: AiSettings) -> Result<(), String> {
     crate::ai::settings::save_ai_settings(&settings)
         .map_err(|e| format!("Failed to save settings: {}", e))
+}
+
+/// Rotate the AI API key with validation
+#[tauri::command]
+pub async fn rotate_api_key(
+    new_api_key: String,
+    provider: crate::ai::settings::CloudProvider,
+) -> Result<(), String> {
+    crate::ai::key_rotation::rotate_api_key(&new_api_key, provider).await
+}
+
+/// Get API key rotation metadata
+#[tauri::command]
+pub async fn get_api_key_metadata() -> Result<crate::secure_storage::KeyMetadata, String> {
+    crate::ai::key_rotation::get_api_key_metadata()
+}
+
+/// Check if API key rotation is needed
+#[tauri::command]
+pub async fn check_api_key_rotation_needed(max_age_days: Option<u32>) -> Result<Option<u32>, String> {
+    crate::ai::key_rotation::check_api_key_rotation_needed(max_age_days)
 }
 
 #[tauri::command]
@@ -2563,3 +2784,454 @@ pub async fn save_cover_letter(
     get_artifact(artifact_id)
 }
 
+
+/// Generate AI-assisted professional summary from user profile
+#[tauri::command]
+pub async fn generate_profile_summary() -> Result<String, String> {
+    use crate::ai::resolver::ResolvedProvider;
+    use crate::ai_cache::{ai_cache_get, ai_cache_put, compute_input_hash, CACHE_TTL_RESUME_DAYS};
+    use crate::db::get_connection;
+    use chrono::Utc;
+    
+    // Load current profile data
+    let profile_data = get_user_profile_data().await
+        .map_err(|e| format!("Failed to load profile data: {}", e))?;
+    
+    let conn = get_connection()
+        .map_err(|e| format!("Failed to get database connection: {}", e))?;
+    let now = Utc::now().to_rfc3339();
+    
+    // Build canonical input for caching
+    let request_payload = serde_json::json!({
+        "operation": "generate_profile_summary",
+        "profile": profile_data.profile,
+        "experience": profile_data.experience,
+        "skills": profile_data.skills,
+    });
+    
+    // Check cache
+    let input_hash = compute_input_hash(&request_payload)
+        .map_err(|e| format!("Failed to compute hash: {}", e))?;
+    
+    if let Some(cached_entry) = ai_cache_get(&conn, "profile_summary", &input_hash, &now)
+        .map_err(|e| format!("Cache lookup error: {}", e))? {
+        // Cache hit - deserialize and return
+        let summary: String = serde_json::from_value(cached_entry.response_payload)
+            .map_err(|e| format!("Failed to deserialize cached response: {}", e))?;
+        return Ok(summary);
+    }
+    
+    // Cache miss - call AI provider
+    let provider = ResolvedProvider::resolve()
+        .map_err(|e| format!("Failed to resolve provider: {}", e))?;
+    
+    // Build prompt for summary generation
+    let mut profile_context = String::new();
+    
+    if let Some(profile) = &profile_data.profile {
+        if !profile.full_name.is_empty() {
+            profile_context.push_str(&format!("Name: {}\n", profile.full_name));
+        }
+        if let Some(title) = &profile.current_role_title {
+            profile_context.push_str(&format!("Current Role: {}\n", title));
+        }
+        if let Some(company) = &profile.current_company {
+            profile_context.push_str(&format!("Current Company: {}\n", company));
+        }
+        if let Some(headline) = &profile.headline {
+            profile_context.push_str(&format!("Headline: {}\n", headline));
+        }
+    }
+    
+    // Add experience summary
+    if !profile_data.experience.is_empty() {
+        profile_context.push_str("\nExperience:\n");
+        for exp in &profile_data.experience {
+            profile_context.push_str(&format!("- {} at {} ({})\n", 
+                exp.title, 
+                exp.company,
+                if exp.is_current { "Current" } else { "Previous" }
+            ));
+            if let Some(achievements) = &exp.achievements {
+                profile_context.push_str(&format!("  Key achievements: {}\n", achievements));
+            }
+        }
+    }
+    
+    // Add skills summary
+    if !profile_data.skills.is_empty() {
+        profile_context.push_str("\nSkills:\n");
+        let skill_names: Vec<String> = profile_data.skills.iter()
+            .map(|s| s.name.clone())
+            .collect();
+        profile_context.push_str(&format!("{}\n", skill_names.join(", ")));
+    }
+    
+    let prompt = format!(
+        r#"Generate a professional summary (2-6 paragraphs) for this profile. 
+The summary should:
+- Be concise and impactful
+- Highlight key achievements and experience
+- Emphasize relevant skills and expertise
+- Use a professional, confident tone
+- Be tailored for job applications
+
+Profile information:
+{}
+
+Return only the summary text, no markdown formatting or additional commentary."#,
+        profile_context
+    );
+    
+    let system_prompt = Some("You are a professional resume writer. Generate compelling professional summaries that highlight achievements and expertise.");
+    
+    let response = provider.as_provider()
+        .call_llm(system_prompt, &prompt)
+        .await
+        .map_err(|e| format!("AI error: {}", e))?;
+    
+    // Extract text from response (may contain markdown code blocks)
+    let summary = extract_json_from_text(&response).trim().to_string();
+    
+    // If the response looks like JSON, try to parse it
+    let final_summary = if summary.starts_with('{') || summary.starts_with('[') {
+        // Try to extract text from JSON
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&summary) {
+            if let Some(text) = json.get("summary").and_then(|v| v.as_str()) {
+                text.to_string()
+            } else if let Some(text) = json.as_str() {
+                text.to_string()
+            } else {
+                summary
+            }
+        } else {
+            summary
+        }
+    } else {
+        summary
+    };
+    
+    // Cache the result
+    let response_payload = serde_json::to_value(&final_summary)
+        .map_err(|e| format!("Failed to serialize response: {}", e))?;
+    
+    // Get model name from settings for cache
+    let model_name = crate::ai::settings::load_ai_settings()
+        .ok()
+        .and_then(|s| s.model_name)
+        .unwrap_or_else(|| "unknown-model".to_string());
+    
+    ai_cache_put(
+        &conn,
+        "profile_summary",
+        &input_hash,
+        &model_name,
+        &request_payload,
+        &response_payload,
+        Some(CACHE_TTL_RESUME_DAYS),
+        &now,
+    )
+    .map_err(|e| format!("Failed to cache result: {}", e))?;
+    
+    Ok(final_summary)
+}
+
+/// Extract skills from experience entries using AI
+#[tauri::command]
+pub async fn extract_skills_from_experience() -> Result<Vec<String>, String> {
+    // TODO: Implement full AI skill extraction using AI provider
+    // For now, return a helpful message
+    Err("AI skill extraction is not yet fully implemented. This feature requires additional AI provider methods and will be available in a future update.".to_string())
+}
+
+/// Rewrite portfolio description using AI
+#[tauri::command]
+pub async fn rewrite_portfolio_description(_portfolio_id: i64, _description: String) -> Result<String, String> {
+    // TODO: Implement full AI portfolio rewriting using AI provider
+    // For now, return a helpful message
+    Err("AI portfolio rewriting is not yet fully implemented. This feature requires additional AI provider methods and will be available in a future update.".to_string())
+}
+
+/// Export all user data as JSON
+#[tauri::command]
+pub async fn export_all_data() -> Result<String, String> {
+    crate::data_export::export_to_json()
+}
+
+/// Delete a job and all related data
+#[tauri::command]
+pub async fn delete_job(job_id: i64) -> Result<(), String> {
+    crate::data_deletion::delete_job(job_id)
+}
+
+/// Delete an application and all related data
+#[tauri::command]
+pub async fn delete_application(application_id: i64) -> Result<(), String> {
+    crate::data_deletion::delete_application(application_id)
+}
+
+/// Delete an artifact
+#[tauri::command]
+pub async fn delete_artifact(artifact_id: i64) -> Result<(), String> {
+    crate::data_deletion::delete_artifact(artifact_id)
+}
+
+/// Delete a profile section or specific item
+#[tauri::command]
+pub async fn delete_profile_section(section: String, item_id: Option<i64>) -> Result<(), String> {
+    crate::data_deletion::delete_profile_section(&section, item_id)
+}
+
+/// Delete all user data (GDPR "Right to be Forgotten")
+/// 
+/// WARNING: This is irreversible! All user data will be permanently deleted.
+#[tauri::command]
+pub async fn delete_all_user_data(include_ai_cache: bool) -> Result<(), String> {
+    crate::data_deletion::delete_all_user_data(include_ai_cache)
+}
+
+/// Get deletion summary (counts of records that would be deleted)
+#[tauri::command]
+pub async fn get_deletion_summary() -> Result<crate::data_deletion::DeletionSummary, String> {
+    crate::data_deletion::get_deletion_summary()
+}
+
+/// Get storage information (verify local-first storage)
+#[tauri::command]
+pub async fn get_storage_info() -> Result<crate::local_storage::StorageInfo, String> {
+    crate::local_storage::get_storage_info()
+}
+
+/// Verify that storage is local
+#[tauri::command]
+pub async fn verify_local_storage() -> Result<bool, String> {
+    crate::local_storage::verify_local_storage()
+}
+
+/// Get total size of local data storage
+#[tauri::command]
+pub async fn get_storage_size() -> Result<u64, String> {
+    crate::local_storage::get_storage_size()
+}
+
+// ============================================================================
+// Profile Import Commands
+// ============================================================================
+
+/// Extract text from a resume file (PDF, DOCX, or TXT)
+#[tauri::command]
+pub async fn extract_resume_text(file_path: String) -> Result<crate::profile_import::ParsedResumeText, String> {
+    use crate::profile_import::extract_text_from_resume;
+    use std::path::PathBuf;
+    
+    let path = PathBuf::from(&file_path);
+    let text = extract_text_from_resume(&path)
+        .map_err(|e| e.to_string_for_tauri())?;
+    
+    Ok(crate::profile_import::ParsedResumeText {
+        text,
+        file_path,
+    })
+}
+
+/// Extract profile data from resume text using AI
+#[tauri::command]
+pub async fn extract_profile_from_resume(resume_text: String) -> Result<crate::profile_import::ExtractedProfileData, String> {
+    use crate::ai::resolver::ResolvedProvider;
+    use crate::ai_cache::{ai_cache_get, ai_cache_put, compute_input_hash, CACHE_TTL_RESUME_DAYS};
+    use crate::db::get_connection;
+    use chrono::Utc;
+    
+    let conn = get_connection()
+        .map_err(|e| format!("Failed to get database connection: {}", e))?;
+    let now = Utc::now().to_rfc3339();
+    
+    // Build canonical input for caching
+    let request_payload = serde_json::json!({
+        "resumeText": resume_text,
+        "operation": "extract_profile"
+    });
+    
+    // Check cache
+    let input_hash = compute_input_hash(&request_payload)
+        .map_err(|e| format!("Failed to compute hash: {}", e))?;
+    
+    if let Some(cached_entry) = ai_cache_get(&conn, "profile_extract", &input_hash, &now)
+        .map_err(|e| format!("Cache lookup error: {}", e))? {
+        // Cache hit - deserialize and return
+        let extracted: crate::profile_import::ExtractedProfileData = serde_json::from_value(cached_entry.response_payload)
+            .map_err(|e| format!("Failed to deserialize cached response: {}", e))?;
+        return Ok(extracted);
+    }
+    
+    // Cache miss - call AI provider
+    let provider = ResolvedProvider::resolve()
+        .map_err(|e| format!("Failed to resolve provider: {}", e))?;
+    
+    // Create prompt for profile extraction
+    let prompt = format!(
+        r#"Extract professional profile information from the following resume text. 
+Return a JSON object with the following structure:
+{{
+  "profile": {{
+    "full_name": "string (required)",
+    "headline": "string (optional)",
+    "location": "string (optional)",
+    "summary": "string (optional, professional summary)",
+    "current_role_title": "string (optional)",
+    "current_company": "string (optional)",
+    "seniority": "string (optional: Junior, Mid, Senior, Lead, Manager, Director, VP, C-Level)",
+    "open_to_roles": "string (optional, comma-separated)"
+  }},
+  "experience": [
+    {{
+      "company": "string (required)",
+      "title": "string (required)",
+      "location": "string (optional)",
+      "start_date": "string (optional, YYYY-MM format)",
+      "end_date": "string (optional, YYYY-MM format, or null for current)",
+      "is_current": "boolean",
+      "description": "string (optional)",
+      "achievements": "string (optional, newline-separated bullets)",
+      "tech_stack": "string (optional, comma-separated)"
+    }}
+  ],
+  "skills": [
+    {{
+      "name": "string (required)",
+      "category": "string (optional: Technical, Soft, Domain, Tool)",
+      "self_rating": "integer (optional, 1-5)",
+      "priority": "string (optional: Core, Supporting, Learning)",
+      "years_experience": "number (optional)",
+      "notes": "string (optional)"
+    }}
+  ],
+  "education": [
+    {{
+      "institution": "string (required)",
+      "degree": "string (optional)",
+      "field_of_study": "string (optional)",
+      "start_date": "string (optional, YYYY-MM format)",
+      "end_date": "string (optional, YYYY-MM format)",
+      "grade": "string (optional)",
+      "description": "string (optional)"
+    }}
+  ],
+  "certifications": [
+    {{
+      "name": "string (required)",
+      "issuing_organization": "string (optional)",
+      "issue_date": "string (optional, YYYY-MM format)",
+      "expiration_date": "string (optional, YYYY-MM format)",
+      "credential_id": "string (optional)",
+      "credential_url": "string (optional)"
+    }}
+  ],
+  "portfolio": [
+    {{
+      "title": "string (required)",
+      "url": "string (optional)",
+      "description": "string (optional)",
+      "role": "string (optional)",
+      "tech_stack": "string (optional, comma-separated)",
+      "highlighted": "boolean"
+    }}
+  ]
+}}
+
+Resume text:
+{}
+
+Return only valid JSON, no markdown formatting."#,
+        resume_text
+    );
+    
+    // Call AI provider using the new generic call_llm method
+    let system_prompt = Some("You are a professional profile extraction assistant. Extract structured profile information from resume text. Always return valid JSON matching the specified schema.");
+    
+    let response = provider.as_provider()
+        .call_llm(system_prompt, &prompt)
+        .await
+        .map_err(|e| format!("AI error: {}", e))?;
+    
+    // Extract JSON from response (may contain markdown code blocks)
+    let json_str = extract_json_from_text(&response);
+    
+    // Parse JSON response
+    let extracted: crate::profile_import::ExtractedProfileData = serde_json::from_str(&json_str)
+        .map_err(|e| format!("Failed to parse AI response as JSON: {}. Response was: {}", e, json_str))?;
+    
+    // Cache the result
+    let response_payload = serde_json::to_value(&extracted)
+        .map_err(|e| format!("Failed to serialize response: {}", e))?;
+    
+    // Get model name from settings for cache
+    let model_name = crate::ai::settings::load_ai_settings()
+        .ok()
+        .and_then(|s| s.model_name)
+        .unwrap_or_else(|| "unknown-model".to_string());
+    
+    ai_cache_put(
+        &conn,
+        "profile_extract",
+        &input_hash,
+        &model_name,
+        &request_payload,
+        &response_payload,
+        Some(CACHE_TTL_RESUME_DAYS),
+        &now,
+    )
+    .map_err(|e| format!("Failed to cache result: {}", e))?;
+    
+    Ok(extracted)
+}
+
+/// Helper function to extract JSON from text (handles markdown code blocks)
+fn extract_json_from_text(text: &str) -> String {
+    // Try to find JSON object boundaries
+    if let Some(start) = text.find('{') {
+        if let Some(end) = text.rfind('}') {
+            let json_candidate = &text[start..=end];
+            // Try to parse it to validate
+            if serde_json::from_str::<serde_json::Value>(json_candidate).is_ok() {
+                return json_candidate.to_string();
+            }
+        }
+    }
+    
+    // If no valid JSON found, try extracting from markdown code blocks
+    if let Some(start) = text.find("```json") {
+        let after_start = &text[start + 7..];
+        if let Some(end) = after_start.find("```") {
+            return after_start[..end].trim().to_string();
+        }
+    }
+    
+    // Also try ``` without json
+    if let Some(start) = text.find("```") {
+        let after_start = &text[start + 3..];
+        if let Some(end) = after_start.find("```") {
+            let candidate = after_start[..end].trim();
+            if candidate.starts_with('{') && candidate.ends_with('}') {
+                if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
+                    return candidate.to_string();
+                }
+            }
+        }
+    }
+    
+    // Fallback: return the whole text
+    text.to_string()
+}
+
+// ============================================================================
+// Job URL Scraping Commands
+// ============================================================================
+
+/// Scrape job data from a URL
+#[tauri::command]
+pub async fn scrape_job_url(url: String) -> Result<crate::job_scraper::ScrapedJobData, String> {
+    crate::job_scraper::scrape_job_url(&url)
+        .await
+        .map_err(|e| e.to_string_for_tauri())
+}

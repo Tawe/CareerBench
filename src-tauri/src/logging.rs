@@ -2,6 +2,7 @@
 
 use log::LevelFilter;
 use simplelog::{CombinedLogger, Config, WriteLogger};
+use std::error::Error;
 use std::fs::File;
 use crate::db::get_app_data_dir;
 
@@ -74,23 +75,93 @@ pub fn setup_panic_hook() {
 }
 
 /// Log an error with context
-#[allow(dead_code)]
-pub fn log_error(context: &str, error: &dyn std::error::Error) {
+pub fn log_error(context: &str, error: &dyn Error) {
     log::error!("[{}] Error: {}", context, error);
     if let Some(source) = error.source() {
         log::error!("[{}] Caused by: {}", context, source);
     }
+    
+    // Log error chain if available
+    let mut current: Option<&dyn Error> = Some(error);
+    let mut depth = 0;
+    while let Some(err) = current {
+        if depth > 0 {
+            log::error!("[{}] Error chain level {}: {}", context, depth, err);
+        }
+        current = err.source();
+        depth += 1;
+        if depth > 10 {
+            // Prevent infinite loops
+            log::warn!("[{}] Error chain too deep, truncating", context);
+            break;
+        }
+    }
+}
+
+/// Log a CareerBenchError with full context
+pub fn log_careerbench_error(context: &str, error: &crate::errors::CareerBenchError) {
+    // Log the main error
+    log::error!("[{}] {}", context, error);
+    
+    // Log additional context based on error type
+    match error {
+        crate::errors::CareerBenchError::Database(db_err) => {
+            log::error!("[{}] Database error details: {:?}", context, db_err);
+        }
+        crate::errors::CareerBenchError::AiProvider(ai_err) => {
+            log::error!("[{}] AI provider error details: {:?}", context, ai_err);
+        }
+        crate::errors::CareerBenchError::Validation(val_err) => {
+            log::warn!("[{}] Validation error: {:?}", context, val_err);
+        }
+        crate::errors::CareerBenchError::Configuration(cfg_err) => {
+            log::warn!("[{}] Configuration error: {:?}", context, cfg_err);
+        }
+        crate::errors::CareerBenchError::FileSystem(fs_err) => {
+            log::error!("[{}] File system error: {:?}", context, fs_err);
+        }
+        crate::errors::CareerBenchError::Application(msg) => {
+            log::error!("[{}] Application error: {}", context, msg);
+        }
+    }
+    
+    // Log source chain if available
+    if let Some(source) = error.source() {
+        log::error!("[{}] Root cause: {}", context, source);
+    }
 }
 
 /// Log a warning with context
-#[allow(dead_code)]
 pub fn log_warning(context: &str, message: &str) {
     log::warn!("[{}] {}", context, message);
 }
 
 /// Log debug information
-#[allow(dead_code)]
 pub fn log_debug(context: &str, message: &str) {
     log::debug!("[{}] {}", context, message);
+}
+
+/// Log an info message with context
+pub fn log_info(context: &str, message: &str) {
+    log::info!("[{}] {}", context, message);
+}
+
+/// Log error with operation context
+/// 
+/// This is a convenience function that logs errors with operation context,
+/// making it easier to trace errors through the application flow.
+pub fn log_operation_error(operation: &str, context: &str, error: &dyn Error) {
+    log::error!("[{}:{}] Error: {}", operation, context, error);
+    if let Some(source) = error.source() {
+        log::error!("[{}:{}] Caused by: {}", operation, context, source);
+    }
+}
+
+/// Log error with timing information
+pub fn log_error_with_timing(context: &str, error: &dyn Error, duration_ms: u64) {
+    log::error!("[{}] Error after {}ms: {}", context, duration_ms, error);
+    if let Some(source) = error.source() {
+        log::error!("[{}] Caused by: {}", context, source);
+    }
 }
 

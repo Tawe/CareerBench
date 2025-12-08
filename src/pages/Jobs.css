@@ -125,6 +125,12 @@
   border-color: var(--cb-border);
 }
 
+.job-card:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+  background-color: #f9fafb;
+}
+
 .job-card.active {
   background-color: var(--cb-accent-soft);
   border-color: var(--cb-accent);
@@ -300,6 +306,28 @@
 }
 
 .parse-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.scrape-button {
+  padding: 0.5rem 1rem;
+  background: var(--color-bg-soft, #f3f4f6);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  color: var(--color-text, #111827);
+  cursor: pointer;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.scrape-button:hover:not(:disabled) {
+  background: var(--color-bg-hover, #e5e7eb);
+  border-color: var(--color-border-hover, #d1d5db);
+}
+
+.scrape-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

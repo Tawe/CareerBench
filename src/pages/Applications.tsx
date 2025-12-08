@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { InlineEditable } from "../components/InlineEditable";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
+import { showToast } from "../components/Toast";
 import "./Applications.css";
 
 type ApplicationStatus =
@@ -77,6 +80,7 @@ export default function Applications() {
   const [selectedApp, setSelectedApp] = useState<ApplicationDetail | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [availableJobs, setAvailableJobs] = useState<Job[]>([]);
+  const [viewMode, setViewMode] = useState<"kanban" | "table">("kanban");
 
   useEffect(() => {
     loadApplications();
@@ -141,7 +145,12 @@ export default function Applications() {
   if (isLoading && applications.length === 0) {
     return (
       <div className="applications">
-        <div className="loading">Loading applications...</div>
+        <div className="applications-header">
+          <LoadingSkeleton width="200px" height="2rem" />
+        </div>
+        <div className="applications-layout">
+          <LoadingSkeleton variant="list" lines={8} />
+        </div>
       </div>
     );
   }
@@ -150,7 +159,11 @@ export default function Applications() {
     <div className="applications">
       <div className="applications-header">
         <h1>Applications</h1>
-        <button onClick={() => setShowCreateModal(true)} className="add-button">
+        <button 
+          onClick={() => setShowCreateModal(true)} 
+          className="add-button"
+          aria-label="Create new application"
+        >
           + Create Application
         </button>
       </div>
@@ -158,31 +171,80 @@ export default function Applications() {
       {error && (
         <div className="error-banner">
           {error}
-          <button onClick={() => setError(null)}>×</button>
+          <button 
+            onClick={() => setError(null)}
+            aria-label="Dismiss error message"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
         </div>
       )}
 
       <div className="applications-layout">
         <div className="pipeline-view">
-          <div className="status-filters">
-            <button
-              className={selectedStatus === "all" ? "active" : ""}
-              onClick={() => setSelectedStatus("all")}
-            >
-              All
-            </button>
-            {statuses.map((status) => (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+            <div className="status-filters">
               <button
-                key={status}
-                className={selectedStatus === status ? "active" : ""}
-                onClick={() => setSelectedStatus(status)}
+                className={selectedStatus === "all" ? "active" : ""}
+                onClick={() => setSelectedStatus("all")}
+                aria-label="Show all applications"
+                aria-pressed={selectedStatus === "all"}
               >
-                {status} ({applicationsByStatus[status]?.length || 0})
+                All
               </button>
-            ))}
+              {statuses.map((status) => (
+                <button
+                  key={status}
+                  className={selectedStatus === status ? "active" : ""}
+                  onClick={() => setSelectedStatus(status)}
+                  aria-label={`Filter applications by ${status} status`}
+                  aria-pressed={selectedStatus === status}
+                >
+                  {status} ({applicationsByStatus[status]?.length || 0})
+                </button>
+              ))}
+            </div>
+            
+            {selectedStatus === "all" && (
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <span style={{ fontSize: "0.875rem", color: "#6b7280" }}>View:</span>
+                <button
+                  onClick={() => setViewMode("kanban")}
+                  aria-label="Switch to kanban view"
+                  aria-pressed={viewMode === "kanban"}
+                  style={{
+                    padding: "0.375rem 0.75rem",
+                    backgroundColor: viewMode === "kanban" ? "#6366f1" : "#e5e7eb",
+                    color: viewMode === "kanban" ? "white" : "#374151",
+                    border: "none",
+                    borderRadius: "0.375rem",
+                    cursor: "pointer",
+                    fontSize: "0.875rem"
+                  }}
+                >
+                  Kanban
+                </button>
+                <button
+                  onClick={() => setViewMode("table")}
+                  aria-label="Switch to table view"
+                  aria-pressed={viewMode === "table"}
+                  style={{
+                    padding: "0.375rem 0.75rem",
+                    backgroundColor: viewMode === "table" ? "#6366f1" : "#e5e7eb",
+                    color: viewMode === "table" ? "white" : "#374151",
+                    border: "none",
+                    borderRadius: "0.375rem",
+                    cursor: "pointer",
+                    fontSize: "0.875rem"
+                  }}
+                >
+                  Table
+                </button>
+              </div>
+            )}
           </div>
 
-          {selectedStatus === "all" ? (
+          {selectedStatus === "all" && viewMode === "kanban" ? (
             <div className="kanban-board">
               {statuses.map((status) => (
                 <div key={status} className="kanban-column">
@@ -196,6 +258,15 @@ export default function Applications() {
                         key={app.id}
                         className={`application-card ${selectedApp?.application.id === app.id ? "active" : ""}`}
                         onClick={() => loadApplicationDetail(app.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            loadApplicationDetail(app.id);
+                          }
+                        }}
+                        tabIndex={0}
+                        role="button"
+                        aria-label={`Application: ${app.job_title || "Untitled"} at ${app.company || "Unknown Company"}`}
                       >
                         <div className="application-card-content">
                           <div className="application-header">
@@ -215,10 +286,11 @@ export default function Applications() {
                                     loadApplicationDetail(app.id);
                                   }
                                 } catch (err: any) {
-                                  alert(err?.message || "Failed to update status");
+                                  showToast(err?.message || "Failed to update status", "error");
                                 }
                               }}
                               onClick={(e) => e.stopPropagation()}
+                              aria-label={`Change status for ${app.job_title || 'Untitled'} application`}
                             >
                               <option value="Saved">Saved</option>
                               <option value="Draft">Draft</option>
@@ -243,8 +315,12 @@ export default function Applications() {
                           )}
                         </div>
                         <div className="application-card-actions" onClick={(e) => e.stopPropagation()}>
-                          <button className="menu-button" title="More options">
-                            <span>⋯</span>
+                          <button 
+                            className="menu-button" 
+                            title="More options"
+                            aria-label={`More options for ${app.job_title || 'Untitled'} application`}
+                          >
+                            <span aria-hidden="true">⋯</span>
                           </button>
                         </div>
                       </div>
@@ -252,6 +328,114 @@ export default function Applications() {
                   </div>
                 </div>
               ))}
+            </div>
+          ) : selectedStatus === "all" && viewMode === "table" ? (
+            <div className="table-view" style={{ flex: 1, overflow: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", backgroundColor: "white", borderRadius: "0.5rem" }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid #e5e7eb", backgroundColor: "#f9fafb" }}>
+                    <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#6b7280" }}>Job Title</th>
+                    <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#6b7280" }}>Company</th>
+                    <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#6b7280" }}>Status</th>
+                    <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#6b7280" }}>Priority</th>
+                    <th style={{ padding: "0.75rem", textAlign: "left", fontSize: "0.875rem", fontWeight: "600", color: "#6b7280" }}>Date Applied</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {applications.map((app) => (
+                    <tr
+                      key={app.id}
+                      onClick={() => loadApplicationDetail(app.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          loadApplicationDetail(app.id);
+                        }
+                      }}
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`Application: ${app.job_title || "Untitled"} at ${app.company || "Unknown Company"}`}
+                      style={{
+                        cursor: "pointer",
+                        borderBottom: "1px solid #e5e7eb",
+                        transition: "background-color 0.15s ease"
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = "#f9fafb";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = "white";
+                      }}
+                      className={selectedApp?.application.id === app.id ? "active" : ""}
+                    >
+                      <td style={{ padding: "0.75rem", fontWeight: "500" }}>{app.job_title || "Untitled"}</td>
+                      <td style={{ padding: "0.75rem", color: "#6b7280" }}>{app.company || "Unknown Company"}</td>
+                      <td style={{ padding: "0.75rem" }}>
+                        <select
+                          value={app.status}
+                          onChange={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              await invoke<Application>("update_application", {
+                                id: app.id,
+                                input: { status: e.target.value as ApplicationStatus },
+                              });
+                              loadApplications();
+                              if (selectedApp?.application.id === app.id) {
+                                loadApplicationDetail(app.id);
+                              }
+                            } catch (err: any) {
+                              alert(err?.message || "Failed to update status");
+                            }
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            padding: "0.25rem 0.5rem",
+                            backgroundColor: "white",
+                            border: "1px solid #e5e7eb",
+                            borderRadius: "0.25rem",
+                            fontSize: "0.8125rem",
+                            cursor: "pointer"
+                          }}
+                        >
+                          <option value="Saved">Saved</option>
+                          <option value="Draft">Draft</option>
+                          <option value="Applied">Applied</option>
+                          <option value="Interviewing">Interviewing</option>
+                          <option value="Offer">Offer</option>
+                          <option value="Rejected">Rejected</option>
+                          <option value="Ghosted">Ghosted</option>
+                          <option value="Withdrawn">Withdrawn</option>
+                        </select>
+                      </td>
+                      <td style={{ padding: "0.75rem" }}>
+                        {app.priority && (
+                          <span style={{
+                            padding: "0.25rem 0.5rem",
+                            borderRadius: "0.25rem",
+                            fontSize: "0.75rem",
+                            fontWeight: "500",
+                            backgroundColor: app.priority === "Dream" ? "#fef3c7" : app.priority === "High" ? "#fee2e2" : app.priority === "Medium" ? "#dbeafe" : "#e5e7eb",
+                            color: app.priority === "Dream" ? "#92400e" : app.priority === "High" ? "#991b1b" : app.priority === "Medium" ? "#1e40af" : "#374151"
+                          }}>
+                            {app.priority}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: "0.75rem", color: "#6b7280", fontSize: "0.875rem" }}>
+                        {app.date_applied ? new Date(app.date_applied).toLocaleDateString() : "-"}
+                      </td>
+                    </tr>
+                  ))}
+                  {applications.length === 0 && (
+                    <tr>
+                      <td colSpan={5} style={{ padding: "2rem", textAlign: "center", color: "#6b7280" }}>
+                        No applications found
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div className="list-view">
@@ -386,6 +570,8 @@ function ApplicationDetailView({
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null);
   const [isLoadingArtifacts, setIsLoadingArtifacts] = useState(false);
+  const [timelineFilter, setTimelineFilter] = useState<string>("all");
+  const [timelineSort, setTimelineSort] = useState<"newest" | "oldest">("newest");
 
   useEffect(() => {
     setFormData(detail.application);
@@ -431,7 +617,7 @@ function ApplicationDetailView({
       setIsEditing(false);
       onUpdate();
     } catch (err: any) {
-      alert(err?.message || "Failed to save application");
+      showToast(err?.message || "Failed to save application", "error");
     } finally {
       setIsSaving(false);
     }
@@ -443,7 +629,7 @@ function ApplicationDetailView({
       await invoke<Application>("archive_application", { id: detail.application.id });
       onUpdate();
     } catch (err: any) {
-      alert(err?.message || "Failed to archive application");
+      showToast(err?.message || "Failed to archive application", "error");
     }
   }
 
@@ -782,9 +968,27 @@ function ApplicationDetailView({
             />
           ) : (
             <div className="notes-display">
-              {formData.notes_summary || (
-                <p className="empty-text">No notes</p>
-              )}
+              <InlineEditable
+                value={formData.notes_summary || ""}
+                onSave={async (newValue) => {
+                  try {
+                    const updated = await invoke<Application>("update_application", {
+                      id: detail.application.id,
+                      input: {
+                        notes_summary: newValue || null,
+                      },
+                    });
+                    setFormData(updated);
+                    onUpdate();
+                  } catch (err: any) {
+                    showToast(err?.message || "Failed to save notes", "error");
+                  }
+                }}
+                placeholder="Click to add notes..."
+                multiline={true}
+                rows={4}
+                className="notes-inline-editable"
+              />
             </div>
           )}
         </div>
@@ -829,43 +1033,180 @@ function ApplicationDetailView({
         <div className="detail-section">
           <div className="section-header">
             <h3>Timeline</h3>
-            <button
-              onClick={() => setShowEventModal(true)}
-              className="add-event-button"
-            >
-              + Add Event
-            </button>
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              {/* Filter dropdown */}
+              <select
+                value={timelineFilter}
+                onChange={(e) => setTimelineFilter(e.target.value)}
+                style={{
+                  padding: "0.375rem 0.75rem",
+                  backgroundColor: "white",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: "0.375rem",
+                  fontSize: "0.875rem",
+                  cursor: "pointer"
+                }}
+              >
+                <option value="all">All Events</option>
+                <option value="InterviewScheduled">Interviews Scheduled</option>
+                <option value="InterviewCompleted">Interviews Completed</option>
+                <option value="OfferReceived">Offers Received</option>
+                <option value="Rejected">Rejections</option>
+                <option value="FollowUpSent">Follow Ups</option>
+              </select>
+              
+              {/* Sort dropdown */}
+              <select
+                value={timelineSort}
+                onChange={(e) => setTimelineSort(e.target.value as "newest" | "oldest")}
+                style={{
+                  padding: "0.375rem 0.75rem",
+                  backgroundColor: "white",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: "0.375rem",
+                  fontSize: "0.875rem",
+                  cursor: "pointer"
+                }}
+              >
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+              </select>
+              
+              <button
+                onClick={() => setShowEventModal(true)}
+                className="add-event-button"
+              >
+                + Add Event
+              </button>
+            </div>
           </div>
           <div className="timeline">
-            {detail.events.length === 0 ? (
-              <div className="empty-text">No events yet</div>
-            ) : (
-              detail.events.map((event) => (
-                <div key={event.id || Math.random()} className="timeline-item">
-                  <div className="timeline-date">
-                    {new Date(event.event_date).toLocaleDateString()}
-                  </div>
-                  <div className="timeline-content">
-                    <div className="timeline-type">{event.event_type}</div>
-                    {event.title && <div className="timeline-title">{event.title}</div>}
-                    {event.from_status && event.to_status && (
-                      <div className="timeline-status-change">
-                        {event.from_status} → {event.to_status}
+            {(() => {
+              // Filter events
+              let filteredEvents = detail.events;
+              if (timelineFilter !== "all") {
+                filteredEvents = filteredEvents.filter(
+                  (event) => event.event_type === timelineFilter
+                );
+              }
+              
+              // Sort events
+              filteredEvents = [...filteredEvents].sort((a, b) => {
+                const dateA = new Date(a.event_date).getTime();
+                const dateB = new Date(b.event_date).getTime();
+                return timelineSort === "newest" ? dateB - dateA : dateA - dateB;
+              });
+              
+              if (filteredEvents.length === 0) {
+                return <div className="empty-text">No events found</div>;
+              }
+              
+              return filteredEvents.map((event, index) => {
+                const eventDate = new Date(event.event_date);
+                const isRecent = (Date.now() - eventDate.getTime()) < 7 * 24 * 60 * 60 * 1000; // Last 7 days
+                const isToday = eventDate.toDateString() === new Date().toDateString();
+                
+                return (
+                  <div 
+                    key={event.id || index} 
+                    className="timeline-item"
+                    style={{
+                      position: "relative",
+                      paddingLeft: "2rem",
+                      paddingBottom: "1.5rem",
+                      borderLeft: index < filteredEvents.length - 1 ? "2px solid #e5e7eb" : "none"
+                    }}
+                  >
+                    {/* Timeline dot */}
+                    <div style={{
+                      position: "absolute",
+                      left: "-6px",
+                      top: "0.25rem",
+                      width: "12px",
+                      height: "12px",
+                      borderRadius: "50%",
+                      backgroundColor: isRecent ? "#6366f1" : "#9ca3af",
+                      border: "2px solid white",
+                      boxShadow: "0 0 0 2px " + (isRecent ? "#6366f1" : "#9ca3af")
+                    }}></div>
+                    
+                    <div className="timeline-date" style={{
+                      fontSize: "0.875rem",
+                      color: "#6b7280",
+                      marginBottom: "0.5rem",
+                      fontWeight: isToday ? "600" : "400"
+                    }}>
+                      {isToday ? "Today" : eventDate.toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric"
+                      })}
+                      {!isToday && (
+                        <span style={{ marginLeft: "0.5rem", color: "#9ca3af" }}>
+                          ({eventDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })})
+                        </span>
+                      )}
+                    </div>
+                    
+                    <div className="timeline-content" style={{
+                      backgroundColor: "#f9fafb",
+                      padding: "0.75rem",
+                      borderRadius: "0.375rem",
+                      border: "1px solid #e5e7eb"
+                    }}>
+                      <div className="timeline-type" style={{
+                        fontSize: "0.875rem",
+                        fontWeight: "600",
+                        color: "#374151",
+                        marginBottom: "0.25rem",
+                        textTransform: "capitalize"
+                      }}>
+                        {event.event_type.replace(/([A-Z])/g, " $1").trim()}
                       </div>
-                    )}
-                    {event.details && (
-                      <div className="timeline-details">{event.details}</div>
-                    )}
+                      {event.title && (
+                        <div className="timeline-title" style={{
+                          fontSize: "0.9375rem",
+                          fontWeight: "500",
+                          color: "#111827",
+                          marginBottom: "0.25rem"
+                        }}>
+                          {event.title}
+                        </div>
+                      )}
+                      {event.from_status && event.to_status && (
+                        <div className="timeline-status-change" style={{
+                          fontSize: "0.8125rem",
+                          color: "#6366f1",
+                          marginBottom: "0.25rem",
+                          padding: "0.25rem 0.5rem",
+                          backgroundColor: "#eef2ff",
+                          borderRadius: "0.25rem",
+                          display: "inline-block"
+                        }}>
+                          {event.from_status} → {event.to_status}
+                        </div>
+                      )}
+                      {event.details && (
+                        <div className="timeline-details" style={{
+                          fontSize: "0.875rem",
+                          color: "#6b7280",
+                          marginTop: "0.5rem",
+                          lineHeight: "1.5"
+                        }}>
+                          {event.details}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
-            )}
+                );
+              });
+            })()}
           </div>
         </div>
       </div>
 
       {showEventModal && (
-        <AddEventSheet
+        <AddEventModal
           applicationId={detail.application.id!}
           onClose={() => setShowEventModal(false)}
           onSuccess={() => {
@@ -902,6 +1243,17 @@ function ArtifactViewSheet({
   const [content, setContent] = useState(artifact.content || "");
   const [isSaving, setIsSaving] = useState(false);
 
+  // Handle Escape key to close sheet
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && !isEditing) {
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, isEditing]);
+
   async function saveArtifact() {
     setIsSaving(true);
     try {
@@ -912,7 +1264,7 @@ function ArtifactViewSheet({
       setIsEditing(false);
       onUpdate();
     } catch (err: any) {
-      alert(err?.message || "Failed to save artifact");
+      showToast(err?.message || "Failed to save artifact", "error");
     } finally {
       setIsSaving(false);
     }
@@ -1017,9 +1369,28 @@ function CreateApplicationSheet({
   });
   const [isSaving, setIsSaving] = useState(false);
 
+  // Handle Escape key to close sheet
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  // Handle Enter key to submit form (but not in textarea)
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter" && e.target instanceof HTMLInputElement && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  }
+
   async function handleSubmit() {
     if (formData.job_id === 0) {
-      alert("Please select a job");
+      showToast("Please select a job", "warning");
       return;
     }
 
@@ -1033,9 +1404,10 @@ function CreateApplicationSheet({
           priority: formData.priority || null,
         },
       });
+      showToast("Application created successfully", "success");
       onSuccess();
     } catch (err: any) {
-      alert(err?.message || "Failed to create application");
+      showToast(err?.message || "Failed to create application", "error");
     } finally {
       setIsSaving(false);
     }
@@ -1114,6 +1486,7 @@ function CreateApplicationSheet({
                 onChange={(e) =>
                   setFormData({ ...formData, channel: e.target.value })
                 }
+                onKeyDown={handleKeyDown}
                 placeholder="LinkedIn, Company Site, etc."
               />
             </div>
@@ -1153,6 +1526,25 @@ function AddEventModal({
   });
   const [isSaving, setIsSaving] = useState(false);
 
+  // Handle Escape key to close sheet
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  // Handle Enter key to submit form (but not in textarea)
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter" && e.target instanceof HTMLInputElement && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  }
+
   async function handleSubmit() {
     setIsSaving(true);
     try {
@@ -1167,7 +1559,7 @@ function AddEventModal({
       });
       onSuccess();
     } catch (err: any) {
-      alert(err?.message || "Failed to add event");
+      showToast(err?.message || "Failed to add event", "error");
     } finally {
       setIsSaving(false);
     }
@@ -1222,6 +1614,7 @@ function AddEventModal({
                 onChange={(e) =>
                   setFormData({ ...formData, title: e.target.value })
                 }
+                onKeyDown={handleKeyDown}
                 placeholder="e.g., Recruiter Phone Screen"
               />
             </div>
@@ -1232,6 +1625,13 @@ function AddEventModal({
                 onChange={(e) =>
                   setFormData({ ...formData, details: e.target.value })
                 }
+                onKeyDown={(e) => {
+                  // Allow Enter in textarea, but Cmd/Ctrl+Enter submits
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    handleSubmit();
+                  }
+                }}
                 rows={4}
                 placeholder="Additional notes about this event..."
               />
@@ -1239,13 +1639,18 @@ function AddEventModal({
           </div>
         </div>
         <div className="sheet-footer">
-          <button onClick={onClose} className="cancel-button">
+          <button 
+            onClick={onClose} 
+            className="cancel-button"
+            aria-label="Cancel adding event"
+          >
             Cancel
           </button>
           <button
             onClick={handleSubmit}
             disabled={isSaving}
             className="save-button"
+            aria-label={isSaving ? "Adding event" : "Add event"}
           >
             {isSaving ? "Adding..." : "Add Event"}
           </button>

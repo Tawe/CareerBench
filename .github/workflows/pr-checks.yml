@@ -1,0 +1,48 @@
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  # Quick checks that should block PRs
+  quick-checks:
+    name: Quick PR Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Check Rust formatting
+        working-directory: src-tauri
+        run: cargo fmt -- --check
+      
+      - name: Run Clippy (warnings as errors)
+        working-directory: src-tauri
+        run: cargo clippy -- -D warnings
+      
+      - name: Check TypeScript compilation
+        run: npx tsc --noEmit
+      
+      - name: Run Rust unit tests
+        working-directory: src-tauri
+        run: cargo test --lib
+      
+      - name: Run frontend tests
+        run: npm test -- --run
+

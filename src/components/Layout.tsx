@@ -1,6 +1,10 @@
-import { Link, useLocation } from "react-router-dom";
-import { useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { QuickSwitcher } from "./QuickSwitcher";
+import { ToastContainer, useToasts } from "./Toast";
 import "./Layout.css";
+import "./QuickSwitcher.css";
+import "./Toast.css";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -8,7 +12,10 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [showQuickSwitcher, setShowQuickSwitcher] = useState(false);
+  const { toasts, removeToast } = useToasts();
 
   const navItems = [
     { 
@@ -68,6 +75,58 @@ export default function Layout({ children }: LayoutProps) {
     },
   ];
 
+  // Keyboard shortcut handler for Cmd+K / Ctrl+K
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // Check for Cmd+K (Mac) or Ctrl+K (Windows/Linux)
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setShowQuickSwitcher(true);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const quickSwitcherItems = [
+    {
+      id: "dashboard",
+      label: "Go to Dashboard",
+      description: "View your application dashboard",
+      category: "navigation" as const,
+      action: () => navigate("/"),
+    },
+    {
+      id: "jobs",
+      label: "Go to Jobs",
+      description: "View and manage job listings",
+      category: "navigation" as const,
+      action: () => navigate("/jobs"),
+    },
+    {
+      id: "applications",
+      label: "Go to Applications",
+      description: "View and manage your applications",
+      category: "navigation" as const,
+      action: () => navigate("/applications"),
+    },
+    {
+      id: "profile",
+      label: "Go to Profile",
+      description: "Edit your profile information",
+      category: "navigation" as const,
+      action: () => navigate("/profile"),
+    },
+    {
+      id: "settings",
+      label: "Go to Settings",
+      description: "Configure application settings",
+      category: "navigation" as const,
+      action: () => navigate("/settings"),
+    },
+  ];
+
   return (
     <div className="layout">
       <nav className={`sidebar ${isCollapsed ? "collapsed" : ""}`}>
@@ -107,6 +166,12 @@ export default function Layout({ children }: LayoutProps) {
           {children}
         </div>
       </main>
+      <QuickSwitcher
+        isOpen={showQuickSwitcher}
+        onClose={() => setShowQuickSwitcher(false)}
+        items={quickSwitcherItems}
+      />
+      <ToastContainer toasts={toasts} onClose={removeToast} />
     </div>
   );
 }

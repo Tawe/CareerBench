@@ -1,5 +1,18 @@
 import { useEffect, useState } from "react";
-import { invoke as tauriInvoke, isTauri } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 import "./Dashboard.css";
 
 interface DashboardKpis {
@@ -87,7 +100,18 @@ export default function Dashboard() {
   if (isLoading) {
     return (
       <div className="dashboard">
-        <div className="loading">Loading dashboard...</div>
+        <div className="dashboard-header">
+          <LoadingSkeleton width="200px" height="2rem" />
+        </div>
+        <div className="kpi-row">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <LoadingSkeleton key={i} variant="card" width="100%" height="120px" />
+          ))}
+        </div>
+        <div className="dashboard-row">
+          <LoadingSkeleton variant="card" width="100%" height="300px" />
+          <LoadingSkeleton variant="card" width="100%" height="300px" />
+        </div>
       </div>
     );
   }
@@ -111,7 +135,12 @@ export default function Dashboard() {
     <div className="dashboard">
       <div className="dashboard-header">
         <h1>Dashboard</h1>
-        <button onClick={loadDashboard}>Reload</button>
+        <button 
+          onClick={loadDashboard}
+          aria-label="Reload dashboard data"
+        >
+          Reload
+        </button>
       </div>
 
       <div className="kpi-row">
@@ -136,81 +165,81 @@ export default function Dashboard() {
       <div className="dashboard-row">
         <div className="dashboard-section">
           <h2>Status Breakdown</h2>
-          <div className="status-list">
-            {data.status_breakdown.map((bucket) => (
-              <div key={bucket.status} className="status-item">
-                <span className="status-name">{bucket.status}</span>
-                <span className="status-count">{bucket.count}</span>
-              </div>
-            ))}
-          </div>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={data.status_breakdown}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
+                dataKey="status" 
+                angle={-45}
+                textAnchor="end"
+                height={80}
+                style={{ fontSize: "0.75rem" }}
+              />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
 
         <div className="dashboard-section">
           <h2>Pipeline Funnel</h2>
-          <div className="funnel">
-            {data.funnel.map((step) => (
-              <div key={step.label} className="funnel-step">
-                <div className="funnel-label">{step.label}</div>
-                <div className="funnel-bar" style={{ height: `${(step.count / (data.funnel[0]?.count || 1)) * 200}px` }}>
-                  {step.count}
-                </div>
-              </div>
-            ))}
-          </div>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={data.funnel} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis type="number" />
+              <YAxis dataKey="label" type="category" width={100} />
+              <Tooltip />
+              <Bar dataKey="count" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       </div>
 
       <div className="dashboard-section">
-        <h2>Activity Calendar (Last 30 Days)</h2>
-        <div className="activity-calendar">
-          {data.activity_last_30_days.map((point) => {
-            const date = new Date(point.date);
-            const dayOfWeek = date.toLocaleDateString('en-US', { weekday: 'short' });
-            const day = date.getDate();
-            const hasActivity = point.applications_created > 0 || point.interviews_completed > 0 || point.offers_received > 0;
-            
-            return (
-              <div 
-                key={point.date} 
-                className={`calendar-day ${hasActivity ? 'has-activity' : ''}`}
-                title={`${point.date}: ${point.applications_created} applications, ${point.interviews_completed} interviews, ${point.offers_received} offers`}
-              >
-                <div className="calendar-day-header">
-                  <span className="calendar-day-name">{dayOfWeek}</span>
-                  <span className="calendar-day-number">{day}</span>
-                </div>
-                {hasActivity && (
-                  <div className="calendar-day-activity">
-                    {point.applications_created > 0 && (
-                      <span className="activity-dot applications" title={`${point.applications_created} applications`}></span>
-                    )}
-                    {point.interviews_completed > 0 && (
-                      <span className="activity-dot interviews" title={`${point.interviews_completed} interviews`}></span>
-                    )}
-                    {point.offers_received > 0 && (
-                      <span className="activity-dot offers" title={`${point.offers_received} offers`}></span>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-        <div className="calendar-legend">
-          <div className="legend-item">
-            <span className="activity-dot applications"></span>
-            <span>Applications</span>
-          </div>
-          <div className="legend-item">
-            <span className="activity-dot interviews"></span>
-            <span>Interviews</span>
-          </div>
-          <div className="legend-item">
-            <span className="activity-dot offers"></span>
-            <span>Offers</span>
-          </div>
-        </div>
+        <h2>Activity Over Time (Last 30 Days)</h2>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={data.activity_last_30_days.map(point => ({
+            ...point,
+            date: new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          }))}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis 
+              dataKey="date" 
+              angle={-45}
+              textAnchor="end"
+              height={80}
+              style={{ fontSize: "0.75rem" }}
+            />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Line 
+              type="monotone" 
+              dataKey="applications_created" 
+              stroke="#6366f1" 
+              strokeWidth={2}
+              name="Applications"
+              dot={{ r: 4 }}
+            />
+            <Line 
+              type="monotone" 
+              dataKey="interviews_completed" 
+              stroke="#8b5cf6" 
+              strokeWidth={2}
+              name="Interviews"
+              dot={{ r: 4 }}
+            />
+            <Line 
+              type="monotone" 
+              dataKey="offers_received" 
+              stroke="#10b981" 
+              strokeWidth={2}
+              name="Offers"
+              dot={{ r: 4 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );

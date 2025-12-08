@@ -135,7 +135,7 @@ mod tests {
     fn test_mock_client_pattern_match() {
         let mut client = MockAiClient::new();
         let test_response = json!({"result": "parsed_job"});
-        client.register_response_for_prompt("parse job", test_response.clone());
+        client.register_response_for_prompt("parse this job", test_response.clone());
 
         let result = client.generate_json("Please parse this job description");
         assert!(result.is_ok());

@@ -16,5 +16,11 @@ pub trait AiProvider: Send + Sync {
     
     /// Parse a job description into structured data
     async fn parse_job(&self, input: JobParsingInput) -> Result<ParsedJobOutput, AiProviderError>;
+    
+    /// Generic LLM call for custom prompts
+    /// This allows for flexible AI operations beyond the standard methods
+    /// system_prompt: Optional system message to set context
+    /// user_prompt: The main user prompt/question
+    async fn call_llm(&self, system_prompt: Option<&str>, user_prompt: &str) -> Result<String, AiProviderError>;
 }
 

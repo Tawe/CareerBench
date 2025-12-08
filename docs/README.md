@@ -16,6 +16,8 @@ Welcome to the CareerBench documentation. This directory contains all project do
 - **[Development Setup](development/setup.md)** - Development environment setup
 - **[Testing Guide](development/testing.md)** - Testing standards and practices
 - **[Architecture Overview](development/architecture.md)** - System architecture and design decisions
+- **[Algorithms and Data Flows](development/algorithms-and-data-flows.md)** - Complex algorithms and data flow documentation
+- **[Architecture Decision Records (ADRs)](development/adr/)** - Important architectural decisions and rationale
 
 ### Specifications
 - **[Overview](specs/overview.md)** - Product overview and core modules
@@ -37,6 +39,7 @@ Welcome to the CareerBench documentation. This directory contains all project do
 - [Contributing](../CONTRIBUTING.md)
 - [Development Setup](development/setup.md)
 - [Testing Guide](development/testing.md)
+- [Algorithms and Data Flows](development/algorithms-and-data-flows.md)
 
 ### For Contributors
 - [Feature Specifications](specs/features/)
@@ -50,6 +53,7 @@ Welcome to the CareerBench documentation. This directory contains all project do
 - **Understanding features?** → [Feature Specifications](specs/features/)
 - **Working with AI?** → [AI Provider Documentation](specs/ai-provider.md)
 - **Setting up local models?** → [Model Setup Guide](guides/model-setup.md)
+- **Understanding complex algorithms?** → [Algorithms and Data Flows](development/algorithms-and-data-flows.md)
 
 ## 📝 Documentation Standards
 

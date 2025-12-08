@@ -8,6 +8,15 @@ mod ai;
 mod commands;
 mod resume_generator;
 mod logging;
+mod errors;
+mod error_logging;
+mod encryption;
+mod secure_storage;
+mod data_export;
+mod data_deletion;
+mod local_storage;
+mod profile_import;
+mod job_scraper;
 
 use db::init_database;
 
@@ -16,6 +25,7 @@ async fn main() {
     // Initialize logging first (before any other operations)
     logging::init_logging();
     logging::setup_panic_hook();
+    error_logging::init_error_metrics();
     log::info!("CareerBench starting up...");
     
     // Initialize database
@@ -28,6 +38,7 @@ async fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::get_dashboard_data,
             commands::get_user_profile_data,
@@ -50,6 +61,9 @@ async fn main() {
             commands::ai_skill_suggestions,
             commands::get_ai_settings,
             commands::save_ai_settings,
+            commands::rotate_api_key,
+            commands::get_api_key_metadata,
+            commands::check_api_key_rotation_needed,
             commands::test_ai_connection,
             commands::check_local_provider_availability,
             commands::get_artifacts_for_application,
@@ -59,6 +73,22 @@ async fn main() {
             commands::update_artifact_title,
             commands::save_resume,
             commands::save_cover_letter,
+            commands::generate_profile_summary,
+            commands::extract_skills_from_experience,
+            commands::rewrite_portfolio_description,
+            commands::export_all_data,
+            commands::delete_job,
+            commands::delete_application,
+            commands::delete_artifact,
+            commands::delete_profile_section,
+            commands::delete_all_user_data,
+            commands::get_deletion_summary,
+            commands::get_storage_info,
+            commands::verify_local_storage,
+            commands::get_storage_size,
+            commands::extract_resume_text,
+            commands::extract_profile_from_resume,
+            commands::scrape_job_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

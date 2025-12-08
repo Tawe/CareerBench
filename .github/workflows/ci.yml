@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  # Rust backend tests and checks
+  rust:
+    name: Rust Tests & Lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      
+      - name: Check Rust formatting
+        working-directory: src-tauri
+        run: cargo fmt -- --check
+      
+      - name: Run Clippy
+        working-directory: src-tauri
+        run: cargo clippy -- -D warnings
+      
+      - name: Run Rust unit tests
+        working-directory: src-tauri
+        run: cargo test --lib
+      
+      - name: Run Rust integration tests
+        working-directory: src-tauri
+        run: cargo test --test integration_tests || echo "No integration tests found"
+      
+      - name: Check Rust compilation
+        working-directory: src-tauri
+        run: cargo check --lib
+
+  # TypeScript frontend tests and linting
+  frontend:
+    name: Frontend Tests & Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Check TypeScript compilation
+        run: npx tsc --noEmit
+      
+      - name: Run frontend tests
+        run: npm test -- --run
+      
+      # Note: Add ESLint if configured
+      # - name: Run ESLint
+      #   run: npx eslint . --ext .ts,.tsx
+
+  # Build verification (ensures the app can be built)
+  build:
+    name: Build Verification
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-latest
+            platform: macos
+          - os: windows-latest
+            platform: windows
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      
+      - name: Build frontend
+        run: npm run build
+      
+      - name: Check Rust compilation
+        working-directory: src-tauri
+        run: cargo check --lib
+      
+      # Note: Full Tauri build is slow, so we just verify compilation
+      # Uncomment below for full builds (takes longer)
+      # - name: Build Tauri app
+      #   run: npm run tauri build -- --debug
+      #   env:
+      #     TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+      #     TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+
+

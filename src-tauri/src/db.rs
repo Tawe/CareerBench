@@ -2,8 +2,20 @@ use rusqlite::{Connection, Result};
 use std::path::PathBuf;
 
 /// Get the app data directory (where database, logs, and models are stored)
+/// 
+/// This function returns a local directory path where all user data is stored.
+/// In development, this is `.careerbench` in the current directory.
+/// In production (when running as a Tauri app), this should use Tauri's app data directory.
+/// 
+/// **Local-First Storage**: All user data (database, logs, secure storage, models)
+/// is stored locally on the user's device. No data is sent to external servers
+/// except for AI API calls (when using cloud AI providers), and even then,
+/// only the prompts are sent, not user data.
 pub fn get_app_data_dir() -> PathBuf {
-    // For now, use a local path. In production, use tauri::path::app_data_dir
+    // In development: use local .careerbench directory
+    // In production: should use tauri::path::app_data_dir() when available
+    // For now, we use a local path to ensure all data is stored locally
+    
     let app_data_dir = std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(".careerbench");
