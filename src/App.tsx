@@ -4,7 +4,10 @@ import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
 import Jobs from "./pages/Jobs";
 import Applications from "./pages/Applications";
+import Calendar from "./pages/Calendar";
 import Settings from "./pages/Settings";
+import Learning from "./pages/Learning";
+import Recruiters from "./pages/Recruiters";
 
 function App() {
   return (
@@ -15,6 +18,9 @@ function App() {
           <Route path="/profile" element={<Profile />} />
           <Route path="/jobs" element={<Jobs />} />
           <Route path="/applications" element={<Applications />} />
+          <Route path="/calendar" element={<Calendar />} />
+          <Route path="/learning" element={<Learning />} />
+          <Route path="/recruiters" element={<Recruiters />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>

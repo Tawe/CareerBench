@@ -107,6 +107,43 @@
   gap: 0.75rem;
 }
 
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-top: 1px solid #e5e7eb;
+  margin-top: 1rem;
+  background-color: white;
+  position: sticky;
+  bottom: 0;
+}
+
+.pagination button {
+  padding: 0.5rem 1rem;
+  background-color: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.15s ease;
+}
+
+.pagination button:hover:not(:disabled) {
+  background-color: #f9fafb;
+  border-color: #6366f1;
+}
+
+.pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pagination-info {
+  font-size: 0.875rem;
+  color: var(--cb-text-muted);
+}
+
 .job-card {
   background-color: var(--cb-bg-elevated);
   padding: 1rem;

@@ -74,7 +74,8 @@ pub fn setup_panic_hook() {
     }));
 }
 
-/// Log an error with context
+/// /// Log an error with context
+#[allow(dead_code)]
 pub fn log_error(context: &str, error: &dyn Error) {
     log::error!("[{}] Error: {}", context, error);
     if let Some(source) = error.source() {
@@ -132,11 +133,13 @@ pub fn log_careerbench_error(context: &str, error: &crate::errors::CareerBenchEr
 }
 
 /// Log a warning with context
+#[allow(dead_code)]
 pub fn log_warning(context: &str, message: &str) {
     log::warn!("[{}] {}", context, message);
 }
 
 /// Log debug information
+#[allow(dead_code)]
 pub fn log_debug(context: &str, message: &str) {
     log::debug!("[{}] {}", context, message);
 }
@@ -150,6 +153,7 @@ pub fn log_info(context: &str, message: &str) {
 /// 
 /// This is a convenience function that logs errors with operation context,
 /// making it easier to trace errors through the application flow.
+#[allow(dead_code)]
 pub fn log_operation_error(operation: &str, context: &str, error: &dyn Error) {
     log::error!("[{}:{}] Error: {}", operation, context, error);
     if let Some(source) = error.source() {
@@ -158,6 +162,7 @@ pub fn log_operation_error(operation: &str, context: &str, error: &dyn Error) {
 }
 
 /// Log error with timing information
+#[allow(dead_code)]
 pub fn log_error_with_timing(context: &str, error: &dyn Error, duration_ms: u64) {
     log::error!("[{}] Error after {}ms: {}", context, duration_ms, error);
     if let Some(source) = error.source() {

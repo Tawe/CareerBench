@@ -72,6 +72,8 @@ pub enum ConfigurationError {
     FileNotFound(String),
     /// Failed to parse configuration
     ParseError(String),
+    /// Other configuration error
+    Other(String),
 }
 
 /// File system errors
@@ -132,6 +134,7 @@ impl fmt::Display for ConfigurationError {
             ConfigurationError::InvalidValue(msg) => write!(f, "Invalid configuration value: {}", msg),
             ConfigurationError::FileNotFound(path) => write!(f, "Configuration file not found: {}", path),
             ConfigurationError::ParseError(msg) => write!(f, "Failed to parse configuration: {}", msg),
+            ConfigurationError::Other(msg) => write!(f, "Configuration error: {}", msg),
         }
     }
 }
@@ -299,6 +302,9 @@ pub fn to_user_message(error: &CareerBenchError) -> String {
             ConfigurationError::ParseError(msg) => {
                 format!("Failed to parse configuration: {}", msg)
             }
+            ConfigurationError::Other(msg) => {
+                format!("Configuration error: {}", msg)
+            }
         },
         CareerBenchError::FileSystem(e) => match e {
             FileSystemError::NotFound(path) => {
@@ -374,6 +380,7 @@ pub fn get_short_error_message(error: &CareerBenchError) -> String {
             ConfigurationError::InvalidValue(msg) => msg.clone(),
             ConfigurationError::FileNotFound(_) => "Configuration file not found".to_string(),
             ConfigurationError::ParseError(msg) => msg.clone(),
+            ConfigurationError::Other(msg) => msg.clone(),
         },
         CareerBenchError::FileSystem(e) => match e {
             FileSystemError::NotFound(path) => format!("File not found: {}", path),

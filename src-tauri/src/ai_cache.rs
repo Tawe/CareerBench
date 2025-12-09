@@ -128,20 +128,212 @@ pub fn ai_cache_put(
     Ok(())
 }
 
-#[allow(dead_code)]
-pub fn ai_cache_clear_purpose(conn: &Connection, purpose: &str) -> Result<(), String> {
-    conn.execute(
+/// Clear all cache entries for a specific purpose
+pub fn ai_cache_clear_purpose(conn: &Connection, purpose: &str) -> Result<u64, String> {
+    let count = conn.execute(
         "DELETE FROM ai_cache WHERE purpose = ?",
         [purpose],
     ).map_err(|e| format!("Failed to clear cache: {}", e))?;
-    Ok(())
+    Ok(count as u64)
 }
 
-#[allow(dead_code)]
-pub fn ai_cache_clear_all(conn: &Connection) -> Result<(), String> {
-    conn.execute("DELETE FROM ai_cache", [])
+/// Clear all cache entries
+pub fn ai_cache_clear_all(conn: &Connection) -> Result<u64, String> {
+    let count = conn.execute("DELETE FROM ai_cache", [])
         .map_err(|e| format!("Failed to clear cache: {}", e))?;
-    Ok(())
+    Ok(count as u64)
+}
+
+/// Clean up expired cache entries
+/// Returns the number of entries deleted
+pub fn ai_cache_cleanup_expired(conn: &Connection, now_iso: &str) -> Result<u64, String> {
+    let count = conn.execute(
+        "DELETE FROM ai_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
+        [now_iso],
+    ).map_err(|e| format!("Failed to cleanup expired cache: {}", e))?;
+    Ok(count as u64)
+}
+
+/// Invalidate cache entries related to a specific job
+/// This clears job_parse entries that might be affected by job updates
+/// Note: Currently clears all job_parse entries since we can't easily match them to specific jobs
+/// In the future, we could add a job_id field to cache entries or store job_id in request_payload
+pub fn ai_cache_invalidate_job(conn: &Connection, _job_id: i64) -> Result<u64, String> {
+    ai_cache_clear_purpose(conn, "job_parse")
+}
+
+/// Invalidate cache entries related to profile changes
+/// This clears resume and cover letter caches that depend on profile data
+pub fn ai_cache_invalidate_profile(conn: &Connection) -> Result<u64, String> {
+    let mut total = 0u64;
+    
+    // Clear resume-related caches
+    total += ai_cache_clear_purpose(conn, "resume_generation")?;
+    total += ai_cache_clear_purpose(conn, "bullet_rewrite")?;
+    total += ai_cache_clear_purpose(conn, "professional_summary")?;
+    total += ai_cache_clear_purpose(conn, "profile_summary")?;
+    
+    // Clear cover letter caches
+    total += ai_cache_clear_purpose(conn, "cover_letter_generation")?;
+    
+    Ok(total)
+}
+
+/// Get cache statistics
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct CacheStats {
+    pub total_entries: u64,
+    pub total_size_bytes: u64,
+    pub entries_by_purpose: std::collections::HashMap<String, u64>,
+    pub expired_entries: u64,
+    pub oldest_entry: Option<String>,
+    pub newest_entry: Option<String>,
+}
+
+/// Get statistics about the cache
+pub fn ai_cache_get_stats(conn: &Connection, now_iso: &str) -> Result<CacheStats, String> {
+    // Total entries
+    let total_entries: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM ai_cache",
+        [],
+        |row| row.get(0),
+    ).map_err(|e| format!("Failed to count entries: {}", e))?;
+    
+    // Total size (approximate - sum of response_payload lengths)
+    let total_size: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(LENGTH(response_payload)), 0) FROM ai_cache",
+        [],
+        |row| row.get(0),
+    ).map_err(|e| format!("Failed to calculate size: {}", e))?;
+    
+    // Entries by purpose
+    let mut entries_by_purpose = std::collections::HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT purpose, COUNT(*) FROM ai_cache GROUP BY purpose"
+    ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+    
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    }).map_err(|e| format!("Failed to query: {}", e))?;
+    
+    for row in rows {
+        let (purpose, count) = row.map_err(|e| format!("Failed to read row: {}", e))?;
+        entries_by_purpose.insert(purpose, count as u64);
+    }
+    
+    // Expired entries
+    let expired_entries: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM ai_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
+        [now_iso],
+        |row| row.get(0),
+    ).map_err(|e| format!("Failed to count expired: {}", e))?;
+    
+    // Oldest entry
+    let oldest_entry: Option<String> = conn.query_row(
+        "SELECT MIN(created_at) FROM ai_cache",
+        [],
+        |row| row.get(0),
+    ).ok();
+    
+    // Newest entry
+    let newest_entry: Option<String> = conn.query_row(
+        "SELECT MAX(created_at) FROM ai_cache",
+        [],
+        |row| row.get(0),
+    ).ok();
+    
+    Ok(CacheStats {
+        total_entries: total_entries as u64,
+        total_size_bytes: total_size as u64,
+        entries_by_purpose,
+        expired_entries: expired_entries as u64,
+        oldest_entry,
+        newest_entry,
+    })
+}
+
+/// Evict least recently used entries to stay under size limit
+/// Uses created_at as a proxy for LRU (oldest entries first)
+/// Returns number of entries evicted
+pub fn ai_cache_evict_lru(conn: &Connection, max_entries: u64) -> Result<u64, String> {
+    // Count current entries
+    let current_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM ai_cache",
+        [],
+        |row| row.get(0),
+    ).map_err(|e| format!("Failed to count entries: {}", e))?;
+    
+    if current_count <= max_entries as i64 {
+        return Ok(0);
+    }
+    
+    // Calculate how many to evict
+    let to_evict = (current_count - max_entries as i64) as u64;
+    
+    // Delete oldest entries (by created_at)
+    // Keep the most recent max_entries
+    let count = conn.execute(
+        "DELETE FROM ai_cache WHERE id IN (
+            SELECT id FROM ai_cache ORDER BY created_at ASC LIMIT ?
+        )",
+        [to_evict as i64],
+    ).map_err(|e| format!("Failed to evict entries: {}", e))?;
+    
+    Ok(count as u64)
+}
+
+/// Evict entries to stay under size limit (in bytes)
+/// Uses created_at as a proxy for LRU
+/// Returns number of entries evicted
+pub fn ai_cache_evict_by_size(conn: &Connection, max_size_bytes: u64) -> Result<u64, String> {
+    // Get current total size
+    let current_size: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(LENGTH(response_payload)), 0) FROM ai_cache",
+        [],
+        |row| row.get(0),
+    ).map_err(|e| format!("Failed to calculate size: {}", e))?;
+    
+    if current_size <= max_size_bytes as i64 {
+        return Ok(0);
+    }
+    
+    // Delete oldest entries until we're under the limit
+    let mut evicted = 0u64;
+    let mut remaining_size = current_size;
+    
+    // Get entries ordered by age (oldest first)
+    let mut stmt = conn.prepare(
+        "SELECT id, LENGTH(response_payload) FROM ai_cache ORDER BY created_at ASC"
+    ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+    
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    }).map_err(|e| format!("Failed to query: {}", e))?;
+    
+    let mut ids_to_delete = Vec::new();
+    for row in rows {
+        let (id, size) = row.map_err(|e| format!("Failed to read row: {}", e))?;
+        if remaining_size > max_size_bytes as i64 {
+            ids_to_delete.push(id);
+            remaining_size -= size;
+            evicted += 1;
+        } else {
+            break;
+        }
+    }
+    
+    if !ids_to_delete.is_empty() {
+        // Delete entries one by one (simple approach)
+        // For better performance with many entries, we could batch, but this is simpler
+        for id in ids_to_delete {
+            conn.execute(
+                "DELETE FROM ai_cache WHERE id = ?",
+                [id],
+            ).map_err(|e| format!("Failed to delete entry {}: {}", id, e))?;
+        }
+    }
+    
+    Ok(evicted)
 }
 
 #[cfg(test)]

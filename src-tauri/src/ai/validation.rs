@@ -148,6 +148,7 @@ fn validate_skill_suggestions_rules(skills: &SkillSuggestions) -> Result<(), AiP
 }
 
 /// Validates that a JSON value is a valid object (not null, array, or primitive)
+#[allow(dead_code)]
 pub fn validate_json_object(value: &Value) -> Result<(), AiProviderError> {
     if !value.is_object() {
         return Err(AiProviderError::ValidationError(
@@ -158,6 +159,7 @@ pub fn validate_json_object(value: &Value) -> Result<(), AiProviderError> {
 }
 
 /// Validates that required fields are present in a JSON object
+#[allow(dead_code)]
 pub fn validate_required_fields(value: &Value, required_fields: &[&str]) -> Result<(), AiProviderError> {
     let obj = value.as_object()
         .ok_or_else(|| AiProviderError::ValidationError("Expected JSON object".to_string()))?;

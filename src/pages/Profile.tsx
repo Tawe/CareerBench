@@ -96,6 +96,9 @@ export default function Profile() {
   const [isDirty, setIsDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
 
   useEffect(() => {
     loadProfile();
@@ -1927,13 +1930,16 @@ function PortfolioSection({
     <div className="profile-section">
       <div className="section-header">
         <h2>Portfolio</h2>
-        <button 
-          onClick={() => startEdit()} 
-          className="add-button"
-          aria-label="Add new portfolio item"
-        >
-          + Add Portfolio Item
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <PortfolioExportButton portfolio={portfolio} />
+          <button 
+            onClick={() => startEdit()} 
+            className="add-button"
+            aria-label="Add new portfolio item"
+          >
+            + Add Portfolio Item
+          </button>
+        </div>
       </div>
 
       {editingId && (
@@ -2122,6 +2128,83 @@ function PortfolioSection({
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+// Portfolio Export Button Component
+function PortfolioExportButton({ portfolio }: { portfolio: PortfolioItem[] }) {
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  async function handleExport(format: "html" | "markdown" | "text", highlightedOnly: boolean) {
+    setIsExporting(true);
+    try {
+      let content: string;
+      let extension: string;
+
+      if (format === "html") {
+        content = await invoke<string>("export_portfolio_html", { includeHighlightedOnly: highlightedOnly });
+        extension = "html";
+      } else if (format === "markdown") {
+        content = await invoke<string>("export_portfolio_markdown", { includeHighlightedOnly: highlightedOnly });
+        extension = "md";
+      } else {
+        content = await invoke<string>("export_portfolio_text", { includeHighlightedOnly: highlightedOnly });
+        extension = "txt";
+      }
+
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+
+      const fileName = `portfolio${highlightedOnly ? "-highlighted" : ""}.${extension}`;
+      const filePath = await save({
+        defaultPath: fileName,
+        filters: [{
+          name: format.toUpperCase(),
+          extensions: [extension]
+        }]
+      });
+
+      if (filePath) {
+        await writeTextFile(filePath, content);
+        showToast(`Portfolio exported successfully as ${format.toUpperCase()}`, "success");
+      }
+    } catch (err: any) {
+      showToast(err?.message || "Failed to export portfolio", "error");
+    } finally {
+      setIsExporting(false);
+      setShowExportMenu(false);
+    }
+  }
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        onClick={() => setShowExportMenu(!showExportMenu)}
+        className="add-button"
+        disabled={isExporting || portfolio.length === 0}
+        aria-label="Export portfolio"
+      >
+        {isExporting ? "Exporting..." : "📤 Export"}
+      </button>
+      {showExportMenu && (
+        <div className="export-menu">
+          <div className="export-menu-header">Export Portfolio</div>
+          <div className="export-menu-section">
+            <div className="export-menu-label">All Items</div>
+            <button onClick={() => handleExport("html", false)}>Export as HTML</button>
+            <button onClick={() => handleExport("markdown", false)}>Export as Markdown</button>
+            <button onClick={() => handleExport("text", false)}>Export as Text</button>
+          </div>
+          <div className="export-menu-section">
+            <div className="export-menu-label">Highlighted Only</div>
+            <button onClick={() => handleExport("html", true)}>Export as HTML</button>
+            <button onClick={() => handleExport("markdown", true)}>Export as Markdown</button>
+            <button onClick={() => handleExport("text", true)}>Export as Text</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

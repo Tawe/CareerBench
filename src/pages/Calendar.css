@@ -1,0 +1,471 @@
+.calendar-page {
+  max-width: 1600px;
+  padding: 2rem;
+}
+
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+.calendar-header h1 {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 500;
+  color: var(--cb-text);
+}
+
+.calendar-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.calendar-controls button {
+  padding: 0.5rem 1rem;
+  background-color: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.15s ease;
+}
+
+.calendar-controls button:hover {
+  background-color: #f9fafb;
+  border-color: #6366f1;
+}
+
+.calendar-controls h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 500;
+  color: var(--cb-text);
+  min-width: 200px;
+  text-align: center;
+}
+
+.calendar-layout {
+  display: flex;
+  gap: 2rem;
+}
+
+.calendar-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.5rem;
+  background-color: white;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+}
+
+.calendar-day-header {
+  padding: 0.75rem;
+  text-align: center;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--cb-text-muted);
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.calendar-day {
+  aspect-ratio: 1;
+  min-height: 100px;
+  padding: 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+  background-color: white;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.calendar-day:hover {
+  background-color: #f9fafb;
+  border-color: #6366f1;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.calendar-day.today {
+  background-color: #eff6ff;
+  border-color: #3b82f6;
+  font-weight: 600;
+}
+
+.calendar-day.selected {
+  background-color: #ede9fe;
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 2px #8b5cf6;
+}
+
+.calendar-day.has-events {
+  border-color: #10b981;
+}
+
+.calendar-day.empty {
+  background-color: #f9fafb;
+  cursor: default;
+  border-color: transparent;
+}
+
+.calendar-day.empty:hover {
+  background-color: #f9fafb;
+  transform: none;
+  box-shadow: none;
+}
+
+.day-number {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--cb-text);
+  margin-bottom: 0.25rem;
+}
+
+.day-events {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: auto;
+}
+
+.event-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.event-dot.interviewscheduled,
+.event-dot.interviewcompleted {
+  background-color: #3b82f6;
+}
+
+.event-dot.followupsent {
+  background-color: #8b5cf6;
+}
+
+.event-dot.offerreceived {
+  background-color: #10b981;
+}
+
+.event-dot.nextaction {
+  background-color: #f59e0b;
+}
+
+.event-more {
+  font-size: 0.625rem;
+  color: var(--cb-text-muted);
+  font-weight: 500;
+}
+
+.calendar-sidebar {
+  width: 350px;
+  background-color: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.sidebar-header h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: var(--cb-text);
+}
+
+.sidebar-header button {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--cb-text-muted);
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+}
+
+.sidebar-header button:hover {
+  background-color: #f9fafb;
+  color: var(--cb-text);
+}
+
+.sidebar-events {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.no-events {
+  text-align: center;
+  color: var(--cb-text-muted);
+  padding: 2rem;
+}
+
+.event-card {
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+  background-color: #f9fafb;
+}
+
+.event-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.event-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--cb-text);
+  flex: 1;
+}
+
+.export-button {
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 0.25rem;
+  transition: all 0.15s ease;
+}
+
+.export-button:hover {
+  background-color: white;
+  transform: scale(1.1);
+}
+
+.event-company {
+  margin: 0.25rem 0;
+  font-size: 0.875rem;
+  color: var(--cb-text-muted);
+}
+
+.event-details {
+  margin: 0.5rem 0;
+  font-size: 0.875rem;
+  color: var(--cb-text);
+  line-height: 1.5;
+}
+
+.event-note {
+  margin: 0.5rem 0;
+  font-size: 0.875rem;
+  color: #6366f1;
+  font-style: italic;
+}
+
+.event-time {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--cb-text-muted);
+  font-weight: 500;
+}
+
+.error-banner {
+  background-color: #fee2e2;
+  color: #991b1b;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.error-banner button {
+  background: none;
+  border: none;
+  color: #111827;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+}
+
+.event-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.reminder-button {
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 0.25rem;
+  transition: all 0.15s ease;
+}
+
+.reminder-button:hover {
+  background-color: white;
+  transform: scale(1.1);
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background-color: white;
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  max-width: 500px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--cb-text);
+}
+
+.modal-header button {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--cb-text-muted);
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+}
+
+.modal-header button:hover {
+  background-color: #f9fafb;
+  color: var(--cb-text);
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--cb-text);
+}
+
+.form-group input,
+.form-group textarea {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  transition: all 0.15s ease;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.form-readonly {
+  padding: 0.5rem;
+  background-color: #f9fafb;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  color: var(--cb-text);
+  margin: 0;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.modal-actions button {
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.modal-actions button[type="button"] {
+  background-color: white;
+  border: 1px solid #e5e7eb;
+  color: var(--cb-text);
+}
+
+.modal-actions button[type="button"]:hover {
+  background-color: #f9fafb;
+  border-color: #6366f1;
+}
+
+.modal-actions button[type="submit"] {
+  background-color: #6366f1;
+  border: 1px solid #6366f1;
+  color: white;
+}
+
+.modal-actions button[type="submit"]:hover {
+  background-color: #4f46e5;
+  border-color: #4f46e5;
+}
+
+
+

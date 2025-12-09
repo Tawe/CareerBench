@@ -23,6 +23,7 @@ struct ErrorMetrics {
 
 /// Record of a single error occurrence
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ErrorRecord {
     /// Timestamp (Unix epoch seconds)
     pub timestamp: u64,
@@ -122,6 +123,7 @@ pub fn record_error_metric(error: &CareerBenchError, context: &str) {
 }
 
 /// Get error statistics
+#[allow(dead_code)]
 pub fn get_error_stats() -> Option<(u64, HashMap<String, u64>, HashMap<String, u64>)> {
     if let Ok(metrics_guard) = ERROR_METRICS.lock() {
         if let Some(metrics) = metrics_guard.as_ref() {
@@ -138,6 +140,7 @@ pub fn get_error_stats() -> Option<(u64, HashMap<String, u64>, HashMap<String, u
 }
 
 /// Get recent error records
+#[allow(dead_code)]
 pub fn get_recent_errors(limit: usize) -> Vec<ErrorRecord> {
     if let Ok(metrics_guard) = ERROR_METRICS.lock() {
         if let Some(metrics) = metrics_guard.as_ref() {

@@ -100,8 +100,8 @@ This document tracks all remaining tasks based on the project specifications. Ta
 
 - [x] **Dashboard Features**
   - [x] Add refresh button functionality - already implemented
-  - [ ] Add date range selector (future)
-  - [ ] Add export functionality (future)
+  - [x] Add date range selector - implemented date inputs for start/end date with automatic refresh on change, defaults to last 30 days
+  - [x] Add export functionality - implemented CSV export with export_dashboard_data command, includes KPIs, status breakdown, funnel, and daily activity data, uses Tauri dialog for file save
   - Reference: `docs/specs/features/simple-dashboard-visualization.md`
 
 ### User Profile
@@ -160,58 +160,61 @@ This document tracks all remaining tasks based on the project specifications. Ta
   - [x] Improve error messages and recovery - created error message utilities (Rust and TypeScript), user-friendly error messages with recovery suggestions, improved error display in UI with actionable guidance, error categorization (recoverable vs requires action)
   - Reference: `docs/specs/ai-provider.md`
 
-- [ ] **Learning Plan Generator** (Future Feature)
-  - [ ] Implement skill gap analysis
-  - [ ] Generate learning tracks
-  - [ ] Create task lists with progress tracking
-  - [ ] Add resource links and practice projects
-  - Reference: `docs/specs/overview.md`
+- [x] **Learning Plan Generator**
+  - [x] Implement skill gap analysis - compares user skills to job requirements, identifies missing skills with priority levels (high/medium/low) based on frequency across jobs
+  - [x] Generate learning tracks - AI-powered generation of structured learning tracks with skill focus, order, and descriptions
+  - [x] Create task lists with progress tracking - tasks with checkboxes, estimated hours, due dates, and completion tracking
+  - [x] Add resource links and practice projects - resource URLs, descriptions, and task types (learning, practice, project)
+  - Full UI implementation in Learning page with skill gap analysis, plan creation, track/task management, and progress tracking
 
 ### Data & Performance
-- [ ] **Caching Improvements**
-  - [ ] Add cache invalidation strategies
-  - [ ] Implement cache size limits
-  - [ ] Add cache statistics/management UI
+- [x] **Caching Improvements**
+  - [x] Add cache invalidation strategies - implemented automatic invalidation on profile/job data changes, manual invalidation by purpose, expired entry cleanup, and Tauri commands for cache management
+  - [x] Implement cache size limits - added LRU eviction by entry count and by total size (bytes), with Tauri commands for both strategies
+  - [x] Add cache statistics/management functions - created CacheStats struct with total entries/size, entries by purpose, expired count, oldest/newest timestamps, and get_cache_stats() command
+  - [x] Add cache statistics/management UI - implemented full cache management UI in Settings page with statistics display, entries by purpose breakdown, cleanup expired entries, evict by size/count, clear all cache, and refresh stats functionality
   - Reference: `docs/specs/features/local-ai-caching.md`
 
-- [ ] **Database Optimizations**
-  - [ ] Add indexes for common queries
-  - [ ] Optimize dashboard aggregation queries
-  - [ ] Add database migration versioning
+- [x] **Database Optimizations**
+  - [x] Add indexes for common queries - added migration 003 with indexes for jobs (is_active+date_added, company, job_source), applications (job_id, status+archived, date_saved, last_activity), events (application_id, event_date), artifacts (application_id, job_id, type), experience (user_profile_id, is_current+start_date), skills (user_profile_id, category), and ai_cache (expires_at, created_at)
+  - [x] Optimize dashboard aggregation queries - combined multiple COUNT queries into single queries with conditional aggregation, combined activity queries (applications/interviews/offers) into single UNION ALL query reducing database round trips from 3 to 1, combined funnel queries into single query, added composite index for event_type+event_date to optimize activity queries
+  - [x] Add database migration versioning - already implemented with migrations table tracking applied migrations
   - [ ] Implement database backup/restore
 
-- [ ] **Performance**
-  - [ ] Optimize large list rendering
-  - [ ] Add pagination for jobs/applications
-  - [ ] Implement virtual scrolling if needed
-  - [ ] Optimize bundle size
+- [x] **Performance**
+  - [x] Optimize large list rendering - created memoized JobCard component using React.memo to prevent unnecessary re-renders
+  - [x] Add pagination for jobs/applications - implemented pagination with page controls, 50 items per page (configurable), shows total count and page info, scrolls to top on page change
+  - [x] Update backend commands to support pagination - added PaginatedJobList and PaginatedApplicationList structs, updated get_job_list and get_applications commands with page/page_size parameters, includes total count and total_pages in response
+  - [ ] Optimize bundle size (code splitting, tree shaking) - pending, requires build configuration changes
 
 ### Future Features (From Overview Spec)
-- [ ] **Email Integration**
-  - [ ] Connect to email providers
-  - [ ] Auto-import application events from emails
-  - [ ] Track email threads
+- [x] **Email Integration**
+  - [x] Connect to email providers - implemented email account management with support for Gmail, Outlook, Yahoo, iCloud, and custom IMAP servers, database schema for email accounts
+  - [x] Auto-import application events from emails - implemented email parsing logic to detect interview scheduling, offers, rejections, and follow-ups from email content
+  - [x] Track email threads - created database schema for email threads and messages, implemented linking threads to applications, UI for managing email accounts in Settings page
+  - Note: Full IMAP sync implementation requires additional OAuth/app password setup and is marked as placeholder for future enhancement
 
-- [ ] **Calendar Integration**
-  - [ ] Sync interviews with system calendar
-  - [ ] Add calendar view for applications
-  - [ ] Reminder notifications
+- [x] **Calendar Integration**
+  - [x] Sync interviews with system calendar - implemented direct sync for macOS (AppleScript) and Windows (PowerShell), with ICS fallback for all platforms
+  - [x] Add calendar view for applications - full month view with event display, sidebar, and export functionality
+  - [x] Reminder notifications - implemented reminder system with database storage, notification sending, and UI for creating reminders
 
-- [ ] **Analytics & Insights**
-  - [ ] Conversion rate analytics
-  - [ ] Time-in-stage metrics
-  - [ ] Channel effectiveness analysis
-  - [ ] AI coaching based on patterns
+- [x] **Analytics & Insights**
+  - [x] Conversion rate analytics - implemented application-to-interview, interview-to-offer, and application-to-offer conversion rates with visual cards
+  - [x] Time-in-stage metrics - calculated average and median time spent in each application stage with charts and detailed tables
+  - [x] Channel effectiveness analysis - analyzed which channels (LinkedIn, company site, etc.) lead to more interviews and offers with rate comparisons
+  - [x] AI coaching based on patterns - implemented intelligent insights system that analyzes patterns and provides actionable recommendations based on conversion rates, timing, and channel performance
 
-- [ ] **Portfolio Builder**
-  - [ ] Rich portfolio item editor
-  - [ ] Portfolio export/generation
-  - [ ] Link portfolio to applications
+- [x] **Portfolio Builder**
+  - [x] Rich portfolio item editor - enhanced editor with better formatting, AI rewrite support, and improved UI
+  - [x] Portfolio export/generation - implemented HTML, Markdown, and plain text export with highlighted-only option
+  - [x] Link portfolio to applications - added database linking table, UI for linking portfolio items to applications in application detail view
 
-- [ ] **Recruiter CRM**
-  - [ ] Contact management
-  - [ ] Interaction history
-  - [ ] Relationship tracking
+- [x] **Recruiter CRM**
+  - [x] Contact management - full CRUD operations for recruiter contacts with name, email, phone, LinkedIn, company, title, notes, relationship strength, and tags
+  - [x] Interaction history - track all interactions (email, phone, meeting, LinkedIn, other) with dates, subjects, notes, outcomes, and follow-up dates
+  - [x] Relationship tracking - link contacts to applications, track relationship strength, view contact history per application
+  - Full UI implementation in Recruiters page with contact list, detail view, interaction management, search and filtering
 
 ## 🔧 Technical Debt & Maintenance
 

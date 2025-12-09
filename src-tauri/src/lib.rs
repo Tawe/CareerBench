@@ -15,4 +15,11 @@ pub mod data_deletion;
 pub mod local_storage;
 pub mod profile_import;
 pub mod job_scraper;
+pub mod calendar;
+pub mod reminders;
+pub mod portfolio_export;
+pub mod analytics;
+pub mod email;
+pub mod learning;
+pub mod recruiter_crm;
 

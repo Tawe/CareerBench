@@ -527,3 +527,62 @@
   border-color: #d1d5db;
 }
 
+/* Portfolio Export Menu */
+.export-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.5rem;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  min-width: 200px;
+  padding: 0.5rem;
+}
+
+.export-menu-header {
+  padding: 0.5rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--cb-text);
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 0.5rem;
+}
+
+.export-menu-section {
+  margin-bottom: 0.75rem;
+}
+
+.export-menu-section:last-child {
+  margin-bottom: 0;
+}
+
+.export-menu-label {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--cb-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.export-menu button {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--cb-text);
+  transition: background-color 0.15s ease;
+}
+
+.export-menu button:hover {
+  background-color: #f9fafb;
+}
+

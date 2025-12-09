@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNavigate } from "react-router-dom";
-import { InlineEditable } from "../components/InlineEditable";
+import { JobCard } from "../components/JobCard";
 import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { showToast } from "../components/Toast";
 import { ProgressIndicator, ProgressStep } from "../components/ProgressIndicator";
@@ -48,6 +48,14 @@ interface ParsedJob {
   remoteFriendly?: boolean | null;
 }
 
+interface PaginatedJobList {
+  jobs: JobSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 export default function Jobs() {
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -56,27 +64,35 @@ export default function Jobs() {
   const [activeOnly, setActiveOnly] = useState(true);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(50);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
     loadJobs();
-  }, [searchTerm, activeOnly]);
+  }, [searchTerm, activeOnly, currentPage]);
 
-  async function loadJobs() {
+  const loadJobs = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const result = await invoke<JobSummary[]>("get_job_list", {
+      const result = await invoke<PaginatedJobList>("get_job_list", {
         search: searchTerm || null,
         activeOnly: activeOnly,
         source: null,
+        page: currentPage,
+        pageSize: pageSize,
       });
-      setJobs(result);
+      setJobs(result.jobs);
+      setTotal(result.total);
+      setTotalPages(result.total_pages);
     } catch (err: any) {
       setError(err?.message || "Failed to load jobs");
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [searchTerm, activeOnly, currentPage, pageSize]);
 
   async function loadJobDetail(id: number) {
     try {
@@ -87,8 +103,17 @@ export default function Jobs() {
     }
   }
 
-  function handleJobClick(job: JobSummary) {
+  const handleJobClick = useCallback((job: JobSummary) => {
     loadJobDetail(job.id);
+  }, []);
+
+  function handlePageChange(newPage: number) {
+    setCurrentPage(newPage);
+    // Scroll to top of list
+    const sidebar = document.querySelector('.jobs-sidebar');
+    if (sidebar) {
+      sidebar.scrollTop = 0;
+    }
   }
 
   if (isLoading && jobs.length === 0) {
@@ -155,106 +180,38 @@ export default function Jobs() {
                 <p>No jobs found. Click "Add Job" to get started.</p>
               </div>
             ) : (
-              jobs.map((job) => (
-                <div
-                  key={job.id}
-                  className={`job-card ${selectedJob?.id === job.id ? "active" : ""}`}
-                  onClick={() => handleJobClick(job)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      handleJobClick(job);
-                    }
-                  }}
-                  tabIndex={0}
-                  role="button"
-                  aria-label={`Job: ${job.title || "Untitled"} at ${job.company || "Unknown Company"}`}
-                >
-                  <div className="job-card-content" onClick={(e) => e.stopPropagation()}>
-                    <h3>
-                      <InlineEditable
-                        value={job.title || ""}
-                        onSave={async (newTitle) => {
-                          if (!job.id) return;
-                          try {
-                            await invoke<Job>("update_job", {
-                              id: job.id,
-                              input: {
-                                title: newTitle || null,
-                              },
-                            });
-                            loadJobs();
-                          } catch (err: any) {
-                            showToast(err?.message || "Failed to update job title", "error");
-                          }
-                        }}
-                        placeholder="Untitled"
-                        className="job-title-inline"
-                      />
-                    </h3>
-                    <p className="job-company">
-                      <InlineEditable
-                        value={job.company || ""}
-                        onSave={async (newCompany) => {
-                          if (!job.id) return;
-                          try {
-                            await invoke<Job>("update_job", {
-                              id: job.id,
-                              input: {
-                                company: newCompany || null,
-                              },
-                            });
-                            loadJobs();
-                          } catch (err: any) {
-                            showToast(err?.message || "Failed to update company", "error");
-                          }
-                        }}
-                        placeholder="Unknown Company"
-                        className="job-company-inline"
-                      />
-                    </p>
-                    {job.location && <p className="job-location">{job.location}</p>}
-                    {job.seniority && (
-                      <span className="job-badge">{job.seniority}</span>
-                    )}
-                    <p className="job-date">
-                      {new Date(job.date_added).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div className="job-card-actions" onClick={(e) => e.stopPropagation()}>
-                    <div className="action-menu">
-                      <button
-                        className="action-button"
-                        onClick={() => {
-                          handleJobClick(job);
-                          // Trigger parse action
-                        }}
-                        title="Parse with AI"
-                        aria-label={`Parse job ${job.title || 'Untitled'} with AI`}
-                      >
-                        <span aria-hidden="true">🤖</span>
-                      </button>
-                      <button
-                        className="action-button"
-                        onClick={() => {
-                          // Create application from job
-                        }}
-                        title="Create Application"
-                        aria-label={`Create application for ${job.title || 'Untitled'}`}
-                      >
-                        <span aria-hidden="true">📝</span>
-                      </button>
-                    </div>
-                    <button 
-                      className="menu-button" 
-                      title="More options"
-                      aria-label="More options for this job"
+              <>
+                {jobs.map((job) => (
+                  <JobCard
+                    key={job.id}
+                    job={job}
+                    isSelected={selectedJob?.id === job.id}
+                    onSelect={handleJobClick}
+                    onRefresh={loadJobs}
+                  />
+                ))}
+                {totalPages > 1 && (
+                  <div className="pagination">
+                    <button
+                      onClick={() => handlePageChange(currentPage - 1)}
+                      disabled={currentPage === 1}
+                      aria-label="Previous page"
                     >
-                      <span aria-hidden="true">⋯</span>
+                      Previous
+                    </button>
+                    <span className="pagination-info">
+                      Page {currentPage} of {totalPages} ({total} total)
+                    </span>
+                    <button
+                      onClick={() => handlePageChange(currentPage + 1)}
+                      disabled={currentPage >= totalPages}
+                      aria-label="Next page"
+                    >
+                      Next
                     </button>
                   </div>
-                </div>
-              ))
+                )}
+              </>
             )}
           </div>
         </div>

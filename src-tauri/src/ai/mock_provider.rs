@@ -27,6 +27,7 @@ impl MockProvider {
 
     /// Register a response for job parsing
     /// The key should be a hash or identifier for the job description
+    #[allow(dead_code)]
     pub fn register_parse_job(&self, key: &str, response: ParsedJobOutput) {
         self.parse_job_responses.lock().unwrap().insert(key.to_string(), response);
     }

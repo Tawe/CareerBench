@@ -36,56 +36,65 @@ pub struct FunnelStep {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct DateRange {
+    pub start_date: String,
+    pub end_date: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DashboardData {
     pub kpis: DashboardKpis,
     pub status_breakdown: Vec<StatusBucket>,
     pub activity_last_30_days: Vec<DailyActivityPoint>,
     pub funnel: Vec<FunnelStep>,
+    pub date_range: Option<DateRange>,
 }
 
 #[tauri::command]
-pub async fn get_dashboard_data() -> Result<DashboardData, String> {
+pub async fn get_dashboard_data(
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<DashboardData, String> {
     let conn = get_connection()
         .map_err(|e| CareerBenchError::from(e).to_string_for_tauri())?;
 
-    // KPIs
-    let total_jobs: i64 = conn
-        .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
-        .map_err(|e| format!("Failed to get total jobs: {}", e))?;
+    // Default to last 30 days if no dates provided
+    let start_date_str = start_date.unwrap_or_else(|| {
+        (Utc::now() - chrono::Duration::days(30)).format("%Y-%m-%d").to_string()
+    });
+    let end_date_str = end_date.unwrap_or_else(|| {
+        Utc::now().format("%Y-%m-%d").to_string()
+    });
 
-    let total_applications: i64 = conn
-        .query_row("SELECT COUNT(*) FROM applications", [], |row| row.get(0))
-        .map_err(|e| format!("Failed to get total applications: {}", e))?;
-
-    let active_applications: i64 = conn
+    // KPIs - Optimized: Single query with conditional aggregation
+    let kpi_row = conn
         .query_row(
-            "SELECT COUNT(*) FROM applications WHERE archived = 0",
-            [],
-            |row| row.get(0),
+            "SELECT 
+                (SELECT COUNT(*) FROM jobs) as total_jobs,
+                (SELECT COUNT(*) FROM applications) as total_applications,
+                (SELECT COUNT(*) FROM applications WHERE archived = 0) as active_applications,
+                (SELECT COUNT(*) FROM applications WHERE date_saved >= ? AND date_saved <= ?) as applications_in_range,
+                (SELECT COUNT(*) FROM applications WHERE status = 'Offer') as offers_received",
+            [&start_date_str, &end_date_str],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,  // total_jobs
+                    row.get::<_, i64>(1)?,  // total_applications
+                    row.get::<_, i64>(2)?,  // active_applications
+                    row.get::<_, i64>(3)?,  // applications_in_range
+                    row.get::<_, i64>(4)?,  // offers_received
+                ))
+            },
         )
-        .map_err(|e| format!("Failed to get active applications: {}", e))?;
+        .map_err(|e| format!("Failed to get KPIs: {}", e))?;
 
-    let applications_last_30_days: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM applications WHERE date_saved >= date('now', '-30 day')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("Failed to get recent applications: {}", e))?;
-
-    let offers_received: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM applications WHERE status = 'Offer'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("Failed to get offers: {}", e))?;
+    let (total_jobs, total_applications, active_applications, applications_in_range, offers_received) = kpi_row;
 
     let kpis = DashboardKpis {
         total_jobs_tracked: total_jobs,
         total_applications,
         active_applications,
-        applications_last_30_days,
+        applications_last_30_days: applications_in_range,
         offers_received,
     };
 
@@ -113,14 +122,18 @@ pub async fn get_dashboard_data() -> Result<DashboardData, String> {
         status_breakdown.push(row_result.map_err(|e| format!("Error: {}", e))?);
     }
 
-    // Activity last 30 days
+    // Activity for date range
     let mut activity_map: HashMap<String, DailyActivityPoint> = HashMap::new();
 
-    // Initialize all dates
-    let now = Utc::now();
-    for i in 0..30 {
-        let date = now - chrono::Duration::days(i);
-        let date_str = date.format("%Y-%m-%d").to_string();
+    // Parse dates and initialize all dates in range
+    let start = chrono::NaiveDate::parse_from_str(&start_date_str, "%Y-%m-%d")
+        .map_err(|e| format!("Invalid start date: {}", e))?;
+    let end = chrono::NaiveDate::parse_from_str(&end_date_str, "%Y-%m-%d")
+        .map_err(|e| format!("Invalid end date: {}", e))?;
+    
+    let mut current = start;
+    while current <= end {
+        let date_str = current.format("%Y-%m-%d").to_string();
         activity_map.insert(
             date_str.clone(),
             DailyActivityPoint {
@@ -130,100 +143,81 @@ pub async fn get_dashboard_data() -> Result<DashboardData, String> {
                 offers_received: 0,
             },
         );
+        current = current.succ_opt()
+            .ok_or_else(|| "Date range too large".to_string())?;
     }
 
-    // Applications created
+    // Activity data - Optimized: Single query with UNION ALL for all activity types
+    // This reduces database round trips from 3 to 1
     let mut stmt = conn
         .prepare(
-            "SELECT date(date_saved) as day, COUNT(*) as count
+            "SELECT date(date_saved) as day, COUNT(*) as count, 'applications' as type
              FROM applications
-             WHERE date_saved >= date('now', '-30 day')
-             GROUP BY day",
-        )
-        .map_err(|e| format!("Failed to prepare applications query: {}", e))?;
-
-    let app_rows = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
-        .map_err(|e| format!("Failed to get applications: {}", e))?;
-
-    for row_result in app_rows {
-        let (day, count) = row_result.map_err(|e| format!("Error: {}", e))?;
-        if let Some(point) = activity_map.get_mut(&day) {
-            point.applications_created = count;
-        }
-    }
-
-    // Interviews completed
-    let mut stmt = conn
-        .prepare(
-            "SELECT date(event_date) as day, COUNT(*) as count
+             WHERE date_saved >= ? AND date_saved <= ?
+             GROUP BY day
+             UNION ALL
+             SELECT date(event_date) as day, COUNT(*) as count, 'interviews' as type
              FROM application_events
              WHERE event_type = 'InterviewCompleted'
-               AND event_date >= date('now', '-30 day')
-             GROUP BY day",
-        )
-        .map_err(|e| format!("Failed to prepare interviews query: {}", e))?;
-
-    let interview_rows = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
-        .map_err(|e| format!("Failed to get interviews: {}", e))?;
-
-    for row_result in interview_rows {
-        let (day, count) = row_result.map_err(|e| format!("Error: {}", e))?;
-        if let Some(point) = activity_map.get_mut(&day) {
-            point.interviews_completed = count;
-        }
-    }
-
-    // Offers received
-    let mut stmt = conn
-        .prepare(
-            "SELECT date(event_date) as day, COUNT(*) as count
+               AND event_date >= ? AND event_date <= ?
+             GROUP BY day
+             UNION ALL
+             SELECT date(event_date) as day, COUNT(*) as count, 'offers' as type
              FROM application_events
              WHERE event_type = 'OfferReceived'
-               AND event_date >= date('now', '-30 day')
+               AND event_date >= ? AND event_date <= ?
              GROUP BY day",
         )
-        .map_err(|e| format!("Failed to prepare offers query: {}", e))?;
+        .map_err(|e| format!("Failed to prepare activity query: {}", e))?;
 
-    let offer_rows = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
-        .map_err(|e| format!("Failed to get offers: {}", e))?;
+    let activity_rows = stmt
+        .query_map(
+            [&start_date_str, &end_date_str, &start_date_str, &end_date_str, &start_date_str, &end_date_str],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,  // day
+                    row.get::<_, i64>(1)?,     // count
+                    row.get::<_, String>(2)?,  // type
+                ))
+            },
+        )
+        .map_err(|e| format!("Failed to get activity data: {}", e))?;
 
-    for row_result in offer_rows {
-        let (day, count) = row_result.map_err(|e| format!("Error: {}", e))?;
+    for row_result in activity_rows {
+        let (day, count, activity_type) = row_result.map_err(|e| format!("Error: {}", e))?;
         if let Some(point) = activity_map.get_mut(&day) {
-            point.offers_received = count;
+            match activity_type.as_str() {
+                "applications" => point.applications_created = count,
+                "interviews" => point.interviews_completed = count,
+                "offers" => point.offers_received = count,
+                _ => {}
+            }
         }
     }
 
     let mut activity_last_30_days: Vec<DailyActivityPoint> = activity_map.into_values().collect();
     activity_last_30_days.sort_by_key(|p| p.date.clone());
 
-    // Funnel
-    let applied: i64 = conn
+    // Funnel - Optimized: Single query with conditional aggregation
+    let funnel_row = conn
         .query_row(
-            "SELECT COUNT(*) FROM applications WHERE status IN ('Applied', 'Interviewing', 'Offer', 'Rejected', 'Ghosted', 'Withdrawn')",
+            "SELECT 
+                COUNT(CASE WHEN status IN ('Applied', 'Interviewing', 'Offer', 'Rejected', 'Ghosted', 'Withdrawn') THEN 1 END) as applied,
+                COUNT(CASE WHEN status IN ('Interviewing', 'Offer', 'Rejected', 'Ghosted', 'Withdrawn') THEN 1 END) as interviewing,
+                COUNT(CASE WHEN status = 'Offer' THEN 1 END) as offer
+             FROM applications",
             [],
-            |row| row.get(0),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,  // applied
+                    row.get::<_, i64>(1)?,  // interviewing
+                    row.get::<_, i64>(2)?,  // offer
+                ))
+            },
         )
-        .map_err(|e| format!("Failed to get applied count: {}", e))?;
+        .map_err(|e| format!("Failed to get funnel data: {}", e))?;
 
-    let interviewing: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM applications WHERE status IN ('Interviewing', 'Offer', 'Rejected', 'Ghosted', 'Withdrawn')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("Failed to get interviewing count: {}", e))?;
-
-    let offer: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM applications WHERE status = 'Offer'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("Failed to get offer count: {}", e))?;
+    let (applied, interviewing, offer) = funnel_row;
 
     let funnel = vec![
         FunnelStep {
@@ -245,7 +239,802 @@ pub async fn get_dashboard_data() -> Result<DashboardData, String> {
         status_breakdown,
         activity_last_30_days,
         funnel,
+        date_range: Some(DateRange {
+            start_date: start_date_str.clone(),
+            end_date: end_date_str.clone(),
+        }),
     })
+}
+
+/// Export dashboard data as CSV
+#[tauri::command]
+pub async fn export_dashboard_data(
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<String, String> {
+    let dashboard_data = get_dashboard_data(start_date, end_date).await?;
+    
+    let mut csv = String::new();
+    
+    // Header
+    csv.push_str("CareerBench Dashboard Export\n");
+    if let Some(range) = &dashboard_data.date_range {
+        csv.push_str(&format!("Date Range: {} to {}\n", range.start_date, range.end_date));
+    }
+    csv.push_str("\n");
+    
+    // KPIs Section
+    csv.push_str("KPIs\n");
+    csv.push_str("Metric,Value\n");
+    csv.push_str(&format!("Total Jobs Tracked,{}\n", dashboard_data.kpis.total_jobs_tracked));
+    csv.push_str(&format!("Total Applications,{}\n", dashboard_data.kpis.total_applications));
+    csv.push_str(&format!("Active Applications,{}\n", dashboard_data.kpis.active_applications));
+    csv.push_str(&format!("Applications in Range,{}\n", dashboard_data.kpis.applications_last_30_days));
+    csv.push_str(&format!("Offers Received,{}\n", dashboard_data.kpis.offers_received));
+    csv.push_str("\n");
+    
+    // Status Breakdown
+    csv.push_str("Status Breakdown\n");
+    csv.push_str("Status,Count\n");
+    for status in &dashboard_data.status_breakdown {
+        csv.push_str(&format!("{},{}\n", status.status, status.count));
+    }
+    csv.push_str("\n");
+    
+    // Funnel
+    csv.push_str("Pipeline Funnel\n");
+    csv.push_str("Stage,Count\n");
+    for step in &dashboard_data.funnel {
+        csv.push_str(&format!("{},{}\n", step.label, step.count));
+    }
+    csv.push_str("\n");
+    
+    // Activity Over Time
+    csv.push_str("Daily Activity\n");
+    csv.push_str("Date,Applications Created,Interviews Completed,Offers Received\n");
+    for point in &dashboard_data.activity_last_30_days {
+        csv.push_str(&format!("{},{},{},{}\n", 
+            point.date, 
+            point.applications_created, 
+            point.interviews_completed, 
+            point.offers_received
+        ));
+    }
+    
+    Ok(csv)
+}
+
+/// Get calendar events for a date range
+#[tauri::command]
+pub async fn get_calendar_events(
+    start_date: String,
+    end_date: String,
+) -> Result<Vec<crate::calendar::CalendarEvent>, String> {
+    crate::calendar::get_calendar_events(&start_date, &end_date)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get calendar events for a specific date
+#[tauri::command]
+pub async fn get_events_for_date(date: String) -> Result<Vec<crate::calendar::CalendarEvent>, String> {
+    crate::calendar::get_events_for_date(&date)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Generate ICS file content for an interview event
+#[tauri::command]
+pub async fn sync_interview_to_calendar(
+    application_id: i64,
+    event_id: Option<i64>,
+    title: String,
+    start_time: String,
+    end_time: Option<String>,
+    location: Option<String>,
+    notes: Option<String>,
+) -> Result<String, String> {
+    crate::calendar::sync_interview_to_calendar(
+        application_id,
+        event_id,
+        &title,
+        &start_time,
+        end_time.as_deref(),
+        location.as_deref(),
+        notes.as_deref(),
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+// ============================================================================
+// Reminder Commands
+// ============================================================================
+
+/// Create a reminder for an interview or event
+#[tauri::command]
+pub async fn create_reminder(
+    application_id: Option<i64>,
+    event_id: Option<i64>,
+    reminder_type: String,
+    reminder_date: String,
+    message: Option<String>,
+) -> Result<i64, String> {
+    crate::reminders::create_reminder(
+        application_id,
+        event_id,
+        &reminder_type,
+        &reminder_date,
+        message.as_deref(),
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get reminders for a date range
+#[tauri::command]
+pub async fn get_reminders(
+    start_date: String,
+    end_date: String,
+    include_sent: bool,
+) -> Result<Vec<crate::reminders::Reminder>, String> {
+    crate::reminders::get_reminders(&start_date, &end_date, include_sent)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get reminders that are due (should be sent now)
+#[tauri::command]
+pub async fn get_due_reminders() -> Result<Vec<crate::reminders::Reminder>, String> {
+    crate::reminders::get_due_reminders()
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get reminders for a specific application
+#[tauri::command]
+pub async fn get_reminders_for_application(
+    application_id: i64,
+) -> Result<Vec<crate::reminders::Reminder>, String> {
+    crate::reminders::get_reminders_for_application(application_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Mark a reminder as sent
+#[tauri::command]
+pub async fn mark_reminder_sent(reminder_id: i64) -> Result<(), String> {
+    crate::reminders::mark_reminder_sent(reminder_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Delete a reminder
+#[tauri::command]
+pub async fn delete_reminder(reminder_id: i64) -> Result<(), String> {
+    crate::reminders::delete_reminder(reminder_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+// ============================================================================
+// Portfolio Export Commands
+// ============================================================================
+
+/// Export portfolio as HTML
+#[tauri::command]
+pub async fn export_portfolio_html(
+    include_highlighted_only: bool,
+) -> Result<String, String> {
+    let conn = get_connection()
+        .map_err(|e| CareerBenchError::from(e).to_string_for_tauri())?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, title, url, description, role, tech_stack, highlighted
+         FROM portfolio_items WHERE user_profile_id = 1
+         ORDER BY highlighted DESC, id DESC"
+    )
+    .map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(crate::portfolio_export::PortfolioItem {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            url: row.get(2)?,
+            description: row.get(3)?,
+            role: row.get(4)?,
+            tech_stack: row.get(5)?,
+            highlighted: row.get::<_, i64>(6)? != 0,
+        })
+    })
+    .map_err(|e| format!("Failed to query portfolio: {}", e))?;
+
+    let mut items = Vec::new();
+    for row_result in rows {
+        items.push(row_result.map_err(|e| format!("Failed to parse portfolio item: {}", e))?);
+    }
+
+    Ok(crate::portfolio_export::export_portfolio_html(&items, include_highlighted_only))
+}
+
+/// Export portfolio as Markdown
+#[tauri::command]
+pub async fn export_portfolio_markdown(
+    include_highlighted_only: bool,
+) -> Result<String, String> {
+    let conn = get_connection()
+        .map_err(|e| CareerBenchError::from(e).to_string_for_tauri())?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, title, url, description, role, tech_stack, highlighted
+         FROM portfolio_items WHERE user_profile_id = 1
+         ORDER BY highlighted DESC, id DESC"
+    )
+    .map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(crate::portfolio_export::PortfolioItem {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            url: row.get(2)?,
+            description: row.get(3)?,
+            role: row.get(4)?,
+            tech_stack: row.get(5)?,
+            highlighted: row.get::<_, i64>(6)? != 0,
+        })
+    })
+    .map_err(|e| format!("Failed to query portfolio: {}", e))?;
+
+    let mut items = Vec::new();
+    for row_result in rows {
+        items.push(row_result.map_err(|e| format!("Failed to parse portfolio item: {}", e))?);
+    }
+
+    Ok(crate::portfolio_export::export_portfolio_markdown(&items, include_highlighted_only))
+}
+
+/// Export portfolio as plain text
+#[tauri::command]
+pub async fn export_portfolio_text(
+    include_highlighted_only: bool,
+) -> Result<String, String> {
+    let conn = get_connection()
+        .map_err(|e| CareerBenchError::from(e).to_string_for_tauri())?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, title, url, description, role, tech_stack, highlighted
+         FROM portfolio_items WHERE user_profile_id = 1
+         ORDER BY highlighted DESC, id DESC"
+    )
+    .map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(crate::portfolio_export::PortfolioItem {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            url: row.get(2)?,
+            description: row.get(3)?,
+            role: row.get(4)?,
+            tech_stack: row.get(5)?,
+            highlighted: row.get::<_, i64>(6)? != 0,
+        })
+    })
+    .map_err(|e| format!("Failed to query portfolio: {}", e))?;
+
+    let mut items = Vec::new();
+    for row_result in rows {
+        items.push(row_result.map_err(|e| format!("Failed to parse portfolio item: {}", e))?);
+    }
+
+    Ok(crate::portfolio_export::export_portfolio_text(&items, include_highlighted_only))
+}
+
+/// Get portfolio items linked to an application
+#[tauri::command]
+pub async fn get_portfolio_for_application(
+    application_id: i64,
+) -> Result<Vec<crate::portfolio_export::PortfolioItem>, String> {
+    crate::portfolio_export::get_portfolio_for_application(application_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Link portfolio items to an application
+#[tauri::command]
+pub async fn link_portfolio_to_application(
+    application_id: i64,
+    portfolio_item_ids: Vec<i64>,
+) -> Result<(), String> {
+    crate::portfolio_export::link_portfolio_to_application(application_id, &portfolio_item_ids)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get applications linked to a portfolio item
+#[tauri::command]
+pub async fn get_applications_for_portfolio(
+    portfolio_item_id: i64,
+) -> Result<Vec<i64>, String> {
+    crate::portfolio_export::get_applications_for_portfolio(portfolio_item_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+// ============================================================================
+// Analytics Commands
+// ============================================================================
+
+/// Get conversion rate analytics
+#[tauri::command]
+pub async fn get_conversion_rates(
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<crate::analytics::ConversionRates, String> {
+    crate::analytics::calculate_conversion_rates(
+        start_date.as_deref(),
+        end_date.as_deref(),
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get time-in-stage metrics
+#[tauri::command]
+pub async fn get_time_in_stage(
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<Vec<crate::analytics::TimeInStage>, String> {
+    crate::analytics::calculate_time_in_stage(
+        start_date.as_deref(),
+        end_date.as_deref(),
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get channel effectiveness analysis
+#[tauri::command]
+pub async fn get_channel_effectiveness(
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<Vec<crate::analytics::ChannelEffectiveness>, String> {
+    crate::analytics::analyze_channel_effectiveness(
+        start_date.as_deref(),
+        end_date.as_deref(),
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Generate AI insights and recommendations
+#[tauri::command]
+pub async fn get_analytics_insights(
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<Vec<crate::analytics::Insight>, String> {
+    crate::analytics::generate_insights(
+        start_date.as_deref(),
+        end_date.as_deref(),
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+// ============================================================================
+// Email Integration Commands
+// ============================================================================
+
+/// Save an email account
+#[tauri::command]
+pub async fn save_email_account(
+    account: crate::email::EmailAccount,
+) -> Result<i64, String> {
+    crate::email::save_email_account(&account)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get all email accounts
+#[tauri::command]
+pub async fn get_email_accounts() -> Result<Vec<crate::email::EmailAccount>, String> {
+    crate::email::get_email_accounts()
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Delete an email account
+#[tauri::command]
+pub async fn delete_email_account(account_id: i64) -> Result<(), String> {
+    crate::email::delete_email_account(account_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get email threads for an application
+#[tauri::command]
+pub async fn get_email_threads_for_application(
+    application_id: i64,
+) -> Result<Vec<crate::email::EmailThread>, String> {
+    crate::email::get_threads_for_application(application_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Link an email thread to an application
+#[tauri::command]
+pub async fn link_email_thread_to_application(
+    thread_id: i64,
+    application_id: i64,
+) -> Result<(), String> {
+    crate::email::link_thread_to_application(thread_id, application_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get email messages for a thread
+#[tauri::command]
+pub async fn get_email_messages_for_thread(
+    thread_id: i64,
+) -> Result<Vec<crate::email::EmailMessage>, String> {
+    crate::email::get_messages_for_thread(thread_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Test email account connection (stub - full IMAP implementation would go here)
+#[tauri::command]
+pub async fn test_email_connection(
+    email: String,
+    _password: String,
+    _provider: String,
+) -> Result<String, String> {
+    // This is a placeholder - full IMAP connection would be implemented here
+    // For now, we'll just validate the email format
+    if email.contains('@') && email.contains('.') {
+        Ok(format!("Email account '{}' format is valid. IMAP connection testing requires additional setup.", email))
+    } else {
+        Err("Invalid email format".to_string())
+    }
+}
+
+/// Sync emails from an account (stub - full IMAP sync would go here)
+#[tauri::command]
+pub async fn sync_email_account(account_id: i64) -> Result<String, String> {
+    // This is a placeholder - full IMAP sync would be implemented here
+    // The implementation would:
+    // 1. Connect to IMAP server
+    // 2. Fetch recent emails
+    // 3. Parse emails for application events
+    // 4. Create/update email threads and messages
+    // 5. Auto-link to applications when possible
+    Ok(format!("Email sync for account {} would be implemented here. This requires IMAP library setup and OAuth/app password configuration.", account_id))
+}
+
+// ============================================================================
+// Learning Plan Commands
+// ============================================================================
+
+/// Analyze skill gaps comparing user skills to job requirements
+#[tauri::command]
+pub async fn analyze_skill_gaps(
+    job_id: Option<i64>,
+    include_all_jobs: bool,
+) -> Result<Vec<crate::learning::SkillGap>, String> {
+    crate::learning::analyze_skill_gaps(job_id, include_all_jobs)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Create a learning plan from skill gaps
+#[tauri::command]
+pub async fn create_learning_plan(
+    title: String,
+    description: Option<String>,
+    target_job_id: Option<i64>,
+    skill_gaps: Vec<crate::learning::SkillGap>,
+    estimated_duration_days: Option<i32>,
+) -> Result<i64, String> {
+    crate::learning::create_learning_plan(
+        title,
+        description,
+        target_job_id,
+        &skill_gaps,
+        estimated_duration_days,
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get all learning plans
+#[tauri::command]
+pub async fn get_learning_plans(
+    status: Option<String>,
+) -> Result<Vec<crate::learning::LearningPlan>, String> {
+    crate::learning::get_learning_plans(status.as_deref())
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get learning tracks for a plan
+#[tauri::command]
+pub async fn get_learning_tracks(
+    learning_plan_id: i64,
+) -> Result<Vec<crate::learning::LearningTrack>, String> {
+    crate::learning::get_learning_tracks(learning_plan_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get learning tasks for a track
+#[tauri::command]
+pub async fn get_learning_tasks(
+    learning_track_id: i64,
+) -> Result<Vec<crate::learning::LearningTask>, String> {
+    crate::learning::get_learning_tasks(learning_track_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Create a learning track
+#[tauri::command]
+pub async fn create_learning_track(
+    learning_plan_id: i64,
+    title: String,
+    description: Option<String>,
+    skill_focus: Option<String>,
+    order_index: i32,
+) -> Result<i64, String> {
+    crate::learning::create_learning_track(
+        learning_plan_id,
+        title,
+        description,
+        skill_focus,
+        order_index,
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Create a learning task
+#[tauri::command]
+pub async fn create_learning_task(
+    learning_track_id: i64,
+    title: String,
+    description: Option<String>,
+    task_type: String,
+    resource_url: Option<String>,
+    estimated_hours: Option<i32>,
+    due_date: Option<String>,
+    order_index: i32,
+) -> Result<i64, String> {
+    crate::learning::create_learning_task(
+        learning_track_id,
+        title,
+        description,
+        task_type,
+        resource_url,
+        estimated_hours,
+        due_date,
+        order_index,
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Mark a learning task as completed
+#[tauri::command]
+pub async fn complete_learning_task(
+    task_id: i64,
+    completed: bool,
+) -> Result<(), String> {
+    crate::learning::complete_learning_task(task_id, completed)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Add a learning resource
+#[tauri::command]
+pub async fn add_learning_resource(
+    learning_task_id: Option<i64>,
+    title: String,
+    url: Option<String>,
+    resource_type: String,
+    description: Option<String>,
+) -> Result<i64, String> {
+    crate::learning::add_learning_resource(
+        learning_task_id,
+        title,
+        url,
+        resource_type,
+        description,
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get learning resources for a task
+#[tauri::command]
+pub async fn get_learning_resources(
+    learning_task_id: i64,
+) -> Result<Vec<crate::learning::LearningResource>, String> {
+    crate::learning::get_learning_resources(learning_task_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Delete a learning plan
+#[tauri::command]
+pub async fn delete_learning_plan(plan_id: i64) -> Result<(), String> {
+    crate::learning::delete_learning_plan(plan_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Update learning plan status
+#[tauri::command]
+pub async fn update_learning_plan_status(
+    plan_id: i64,
+    status: String,
+) -> Result<(), String> {
+    crate::learning::update_learning_plan_status(plan_id, &status)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Generate learning tracks and tasks using AI
+#[tauri::command]
+pub async fn generate_learning_content(
+    learning_plan_id: i64,
+    skill_gaps: Vec<crate::learning::SkillGap>,
+) -> Result<(), String> {
+    crate::learning::generate_learning_content(learning_plan_id, &skill_gaps)
+        .await
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+// ============================================================================
+// Recruiter CRM Commands
+// ============================================================================
+
+/// Create a new recruiter contact
+#[tauri::command]
+pub async fn create_recruiter_contact(
+    name: String,
+    email: Option<String>,
+    phone: Option<String>,
+    linkedin_url: Option<String>,
+    company: Option<String>,
+    title: Option<String>,
+    notes: Option<String>,
+    relationship_strength: Option<String>,
+    tags: Option<String>,
+) -> Result<i64, String> {
+    crate::recruiter_crm::create_recruiter_contact(
+        name,
+        email,
+        phone,
+        linkedin_url,
+        company,
+        title,
+        notes,
+        relationship_strength,
+        tags,
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get all recruiter contacts
+#[tauri::command]
+pub async fn get_recruiter_contacts(
+    company_filter: Option<String>,
+    search_query: Option<String>,
+) -> Result<Vec<crate::recruiter_crm::RecruiterContact>, String> {
+    crate::recruiter_crm::get_recruiter_contacts(
+        company_filter.as_deref(),
+        search_query.as_deref(),
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get a single recruiter contact
+#[tauri::command]
+pub async fn get_recruiter_contact(
+    contact_id: i64,
+) -> Result<crate::recruiter_crm::RecruiterContact, String> {
+    crate::recruiter_crm::get_recruiter_contact(contact_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Update a recruiter contact
+#[tauri::command]
+pub async fn update_recruiter_contact(
+    contact_id: i64,
+    name: Option<String>,
+    email: Option<String>,
+    phone: Option<String>,
+    linkedin_url: Option<String>,
+    company: Option<String>,
+    title: Option<String>,
+    notes: Option<String>,
+    relationship_strength: Option<String>,
+    tags: Option<String>,
+) -> Result<(), String> {
+    crate::recruiter_crm::update_recruiter_contact(
+        contact_id,
+        name,
+        email,
+        phone,
+        linkedin_url,
+        company,
+        title,
+        notes,
+        relationship_strength,
+        tags,
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Delete a recruiter contact
+#[tauri::command]
+pub async fn delete_recruiter_contact(contact_id: i64) -> Result<(), String> {
+    crate::recruiter_crm::delete_recruiter_contact(contact_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Create a new interaction
+#[tauri::command]
+pub async fn create_interaction(
+    contact_id: i64,
+    interaction_type: String,
+    interaction_date: String,
+    subject: Option<String>,
+    notes: Option<String>,
+    linked_application_id: Option<i64>,
+    linked_job_id: Option<i64>,
+    outcome: Option<String>,
+    follow_up_date: Option<String>,
+) -> Result<i64, String> {
+    crate::recruiter_crm::create_interaction(
+        contact_id,
+        interaction_type,
+        interaction_date,
+        subject,
+        notes,
+        linked_application_id,
+        linked_job_id,
+        outcome,
+        follow_up_date,
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get interactions for a contact
+#[tauri::command]
+pub async fn get_interactions_for_contact(
+    contact_id: i64,
+) -> Result<Vec<crate::recruiter_crm::RecruiterInteraction>, String> {
+    crate::recruiter_crm::get_interactions_for_contact(contact_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get interactions for an application
+#[tauri::command]
+pub async fn get_interactions_for_application(
+    application_id: i64,
+) -> Result<Vec<crate::recruiter_crm::RecruiterInteraction>, String> {
+    crate::recruiter_crm::get_interactions_for_application(application_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Link a contact to an application
+#[tauri::command]
+pub async fn link_contact_to_application(
+    contact_id: i64,
+    application_id: i64,
+    role: Option<String>,
+    notes: Option<String>,
+) -> Result<i64, String> {
+    crate::recruiter_crm::link_contact_to_application(contact_id, application_id, role, notes)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get contacts linked to an application
+#[tauri::command]
+pub async fn get_contacts_for_application(
+    application_id: i64,
+) -> Result<Vec<crate::recruiter_crm::RecruiterContact>, String> {
+    crate::recruiter_crm::get_contacts_for_application(application_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get applications linked to a contact
+#[tauri::command]
+pub async fn get_applications_for_contact(contact_id: i64) -> Result<Vec<i64>, String> {
+    crate::recruiter_crm::get_applications_for_contact(contact_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Unlink a contact from an application
+#[tauri::command]
+pub async fn unlink_contact_from_application(
+    contact_id: i64,
+    application_id: i64,
+) -> Result<(), String> {
+    crate::recruiter_crm::unlink_contact_from_application(contact_id, application_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Delete an interaction
+#[tauri::command]
+pub async fn delete_interaction(interaction_id: i64) -> Result<(), String> {
+    crate::recruiter_crm::delete_interaction(interaction_id)
+        .map_err(|e| e.to_string_for_tauri())
 }
 
 // User Profile types
@@ -504,6 +1293,10 @@ pub async fn get_user_profile_data() -> Result<UserProfileData, String> {
 pub async fn save_user_profile_data(data: UserProfileData) -> Result<UserProfileData, String> {
     let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
     let now = Utc::now().to_rfc3339();
+    
+    // Invalidate profile-related caches before saving
+    // This ensures resume/cover letter caches are cleared when profile changes
+    let _ = crate::ai_cache::ai_cache_invalidate_profile(&conn);
 
     // Save or update profile
     if let Some(profile) = &data.profile {
@@ -761,6 +1554,8 @@ pub async fn update_job(id: i64, input: UpdateJobInput) -> Result<Job, String> {
     if let Some(raw_description) = &input.raw_description {
         updates.push("raw_description = ?");
         updates.push("parsed_json = NULL"); // Clear parsed data when description changes
+        // Invalidate job parsing cache when description changes
+        let _ = crate::ai_cache::ai_cache_invalidate_job(&conn, id);
         params.push(raw_description.clone());
     }
     if let Some(is_active) = input.is_active {
@@ -840,41 +1635,83 @@ pub async fn update_job(id: i64, input: UpdateJobInput) -> Result<Job, String> {
     get_job_detail(id).await
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PaginatedJobList {
+    pub jobs: Vec<JobSummary>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+    pub total_pages: i64,
+}
+
 #[tauri::command]
 pub async fn get_job_list(
     search: Option<String>,
     active_only: Option<bool>,
     source: Option<String>,
-) -> Result<Vec<JobSummary>, String> {
+    page: Option<i64>,
+    page_size: Option<i64>,
+) -> Result<PaginatedJobList, String> {
     let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
 
-    let mut query = "SELECT id, title, company, location, seniority, domain_tags, date_added FROM jobs WHERE 1=1".to_string();
+    let page = page.unwrap_or(1).max(1);
+    let page_size = page_size.unwrap_or(50).max(1).min(100); // Limit to 100 per page
+    let offset = (page - 1) * page_size;
+
+    // Build WHERE clause
+    let mut where_clauses = Vec::new();
     let mut params: Vec<String> = Vec::new();
 
     if active_only.unwrap_or(true) {
-        query.push_str(" AND is_active = 1");
+        where_clauses.push("is_active = 1".to_string());
     }
 
     if let Some(source_filter) = &source {
-        query.push_str(" AND job_source = ?");
+        where_clauses.push("job_source = ?".to_string());
         params.push(source_filter.clone());
     }
 
     if let Some(search_term) = &search {
-        query.push_str(" AND (title LIKE ? OR company LIKE ? OR location LIKE ? OR raw_description LIKE ?)");
+        where_clauses.push("(title LIKE ? OR company LIKE ? OR location LIKE ? OR raw_description LIKE ?)".to_string());
         let search_pattern = format!("%{}%", search_term);
         for _ in 0..4 {
             params.push(search_pattern.clone());
         }
     }
 
-    query.push_str(" ORDER BY date_added DESC");
+    let where_clause = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", where_clauses.join(" AND "))
+    };
+
+    // Get total count
+    let count_query = format!("SELECT COUNT(*) FROM jobs {}", where_clause);
+    let total: i64 = if params.is_empty() {
+        conn.query_row(&count_query, [], |row| row.get(0))
+            .map_err(|e| format!("Failed to get total count: {}", e))?
+    } else {
+        let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        conn.query_row(&count_query, rusqlite::params_from_iter(rusqlite_params.iter().cloned()), |row| row.get(0))
+            .map_err(|e| format!("Failed to get total count: {}", e))?
+    };
+
+    // Get paginated results
+    let query = format!(
+        "SELECT id, title, company, location, seniority, domain_tags, date_added FROM jobs {} ORDER BY date_added DESC LIMIT ? OFFSET ?",
+        where_clause
+    );
 
     let mut stmt = conn
         .prepare(&query)
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
-    let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+    // Add limit and offset to params
+    let mut all_params = params.clone();
+    all_params.push(page_size.to_string());
+    all_params.push(offset.to_string());
+    
+    let rusqlite_params: Vec<&dyn rusqlite::ToSql> = all_params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
     let rows = stmt
         .query_map(rusqlite::params_from_iter(rusqlite_params.iter().cloned()), |row| {
             Ok(JobSummary {
@@ -894,7 +1731,19 @@ pub async fn get_job_list(
         jobs.push(row_result.map_err(|e| format!("Error: {}", e))?);
     }
 
-    Ok(jobs)
+    let total_pages = if total > 0 {
+        ((total as f64 / page_size as f64).ceil() as i64).max(1)
+    } else {
+        0
+    };
+
+    Ok(PaginatedJobList {
+        jobs,
+        total,
+        page,
+        page_size,
+        total_pages,
+    })
 }
 
 #[tauri::command]
@@ -1414,38 +2263,80 @@ pub async fn update_application(id: i64, input: UpdateApplicationInput) -> Resul
     get_application_detail(id).await.map(|d| d.application)
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PaginatedApplicationList {
+    pub applications: Vec<ApplicationSummary>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+    pub total_pages: i64,
+}
+
 #[tauri::command]
 pub async fn get_applications(
     status: Option<String>,
     job_id: Option<i64>,
     active_only: Option<bool>,
-) -> Result<Vec<ApplicationSummary>, String> {
+    page: Option<i64>,
+    page_size: Option<i64>,
+) -> Result<PaginatedApplicationList, String> {
     let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
 
-    let mut query = "SELECT a.id, a.job_id, j.title, j.company, a.status, a.priority, a.date_saved, a.date_applied, a.last_activity_date FROM applications a LEFT JOIN jobs j ON a.job_id = j.id WHERE 1=1".to_string();
+    let page = page.unwrap_or(1).max(1);
+    let page_size = page_size.unwrap_or(50).max(1).min(100); // Limit to 100 per page
+    let offset = (page - 1) * page_size;
+
+    // Build WHERE clause
+    let mut where_clauses = Vec::new();
     let mut params: Vec<String> = Vec::new();
 
     if active_only.unwrap_or(true) {
-        query.push_str(" AND a.archived = 0");
+        where_clauses.push("a.archived = 0".to_string());
     }
 
     if let Some(status_filter) = &status {
-        query.push_str(" AND a.status = ?");
+        where_clauses.push("a.status = ?".to_string());
         params.push(status_filter.clone());
     }
 
     if let Some(job_id_filter) = job_id {
-        query.push_str(" AND a.job_id = ?");
+        where_clauses.push("a.job_id = ?".to_string());
         params.push(job_id_filter.to_string());
     }
 
-    query.push_str(" ORDER BY a.date_saved DESC");
+    let where_clause = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", where_clauses.join(" AND "))
+    };
+
+    // Get total count
+    let count_query = format!("SELECT COUNT(*) FROM applications a LEFT JOIN jobs j ON a.job_id = j.id {}", where_clause);
+    let total: i64 = if params.is_empty() {
+        conn.query_row(&count_query, [], |row| row.get(0))
+            .map_err(|e| format!("Failed to get total count: {}", e))?
+    } else {
+        let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        conn.query_row(&count_query, rusqlite::params_from_iter(rusqlite_params.iter().cloned()), |row| row.get(0))
+            .map_err(|e| format!("Failed to get total count: {}", e))?
+    };
+
+    // Get paginated results
+    let query = format!(
+        "SELECT a.id, a.job_id, j.title, j.company, a.status, a.priority, a.date_saved, a.date_applied, a.last_activity_date FROM applications a LEFT JOIN jobs j ON a.job_id = j.id {} ORDER BY a.date_saved DESC LIMIT ? OFFSET ?",
+        where_clause
+    );
 
     let mut stmt = conn
         .prepare(&query)
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
-    let rusqlite_params: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+    // Add limit and offset to params
+    let mut all_params = params.clone();
+    all_params.push(page_size.to_string());
+    all_params.push(offset.to_string());
+
+    let rusqlite_params: Vec<&dyn rusqlite::ToSql> = all_params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
     let rows = stmt
         .query_map(rusqlite::params_from_iter(rusqlite_params.iter().cloned()), |row| {
             Ok(ApplicationSummary {
@@ -1467,7 +2358,19 @@ pub async fn get_applications(
         applications.push(row_result.map_err(|e| format!("Error: {}", e))?);
     }
 
-    Ok(applications)
+    let total_pages = if total > 0 {
+        ((total as f64 / page_size as f64).ceil() as i64).max(1)
+    } else {
+        0
+    };
+
+    Ok(PaginatedApplicationList {
+        applications,
+        total,
+        page,
+        page_size,
+        total_pages,
+    })
 }
 
 #[tauri::command]
@@ -3234,4 +4137,85 @@ pub async fn scrape_job_url(url: String) -> Result<crate::job_scraper::ScrapedJo
     crate::job_scraper::scrape_job_url(&url)
         .await
         .map_err(|e| e.to_string_for_tauri())
+}
+
+// ============================================================================
+// Cache Management Commands
+// ============================================================================
+
+/// Get cache statistics
+#[tauri::command]
+pub async fn get_cache_stats() -> Result<crate::ai_cache::CacheStats, String> {
+    use crate::ai_cache::ai_cache_get_stats;
+    use crate::db::get_connection;
+    use chrono::Utc;
+    
+    let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
+    let now = Utc::now().to_rfc3339();
+    
+    ai_cache_get_stats(&conn, &now)
+        .map_err(|e| format!("Failed to get cache stats: {}", e))
+}
+
+/// Clear cache by purpose
+#[tauri::command]
+pub async fn clear_cache_by_purpose(purpose: String) -> Result<u64, String> {
+    use crate::ai_cache::ai_cache_clear_purpose;
+    use crate::db::get_connection;
+    
+    let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
+    
+    ai_cache_clear_purpose(&conn, &purpose)
+        .map_err(|e| format!("Failed to clear cache: {}", e))
+}
+
+/// Clear all cache entries
+#[tauri::command]
+pub async fn clear_all_cache() -> Result<u64, String> {
+    use crate::ai_cache::ai_cache_clear_all;
+    use crate::db::get_connection;
+    
+    let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
+    
+    ai_cache_clear_all(&conn)
+        .map_err(|e| format!("Failed to clear cache: {}", e))
+}
+
+/// Cleanup expired cache entries
+#[tauri::command]
+pub async fn cleanup_expired_cache() -> Result<u64, String> {
+    use crate::ai_cache::ai_cache_cleanup_expired;
+    use crate::db::get_connection;
+    use chrono::Utc;
+    
+    let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
+    let now = Utc::now().to_rfc3339();
+    
+    ai_cache_cleanup_expired(&conn, &now)
+        .map_err(|e| format!("Failed to cleanup cache: {}", e))
+}
+
+/// Evict cache entries to stay under size limit
+#[tauri::command]
+pub async fn evict_cache_by_size(max_size_mb: u64) -> Result<u64, String> {
+    use crate::ai_cache::ai_cache_evict_by_size;
+    use crate::db::get_connection;
+    
+    let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
+    let max_size_bytes = max_size_mb * 1024 * 1024;
+    
+    ai_cache_evict_by_size(&conn, max_size_bytes)
+        .map_err(|e| format!("Failed to evict cache: {}", e))
+}
+
+/// Evict cache entries to stay under entry count limit
+#[tauri::command]
+pub async fn evict_cache_by_count(max_entries: u64) -> Result<u64, String> {
+    use crate::ai_cache::ai_cache_evict_lru;
+    use crate::db::get_connection;
+    
+    let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
+    
+    ai_cache_evict_lru(&conn, max_entries)
+        .map_err(|e| format!("Failed to evict cache: {}", e))
 }

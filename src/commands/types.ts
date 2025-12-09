@@ -250,6 +250,23 @@ export interface ApplicationDetail {
   events: ApplicationEvent[];
 }
 
+// ============================================================================
+// Calendar Types
+// ============================================================================
+
+export interface CalendarEvent {
+  id?: number;
+  applicationId: number;
+  jobTitle?: string;
+  company?: string;
+  eventType: string;
+  eventDate: string;
+  title?: string;
+  details?: string;
+  nextActionDate?: string;
+  nextActionNote?: string;
+}
+
 export interface CreateApplicationInput {
   jobId: number;
   status?: ApplicationStatus;
@@ -509,6 +526,468 @@ export interface Commands {
     args: [portfolioId: number, description: string];
     return: string;
   };
+
+  // Calendar
+  get_calendar_events: {
+    args: [startDate: string, endDate: string];
+    return: CalendarEvent[];
+  };
+  get_events_for_date: {
+    args: [date: string];
+    return: CalendarEvent[];
+  };
+  sync_interview_to_calendar: {
+    args: [
+      applicationId: number,
+      eventId: number | null,
+      title: string,
+      startTime: string,
+      endTime: string | null,
+      location: string | null,
+      notes: string | null
+    ];
+    return: string; // ICS file content or sync confirmation
+  };
+
+  // Reminders
+  create_reminder: {
+    args: [
+      applicationId: number | null,
+      eventId: number | null,
+      reminderType: string,
+      reminderDate: string,
+      message: string | null
+    ];
+    return: number; // reminder ID
+  };
+  get_reminders: {
+    args: [startDate: string, endDate: string, includeSent: boolean];
+    return: Reminder[];
+  };
+  get_due_reminders: {
+    args: [];
+    return: Reminder[];
+  };
+  get_reminders_for_application: {
+    args: [applicationId: number];
+    return: Reminder[];
+  };
+  mark_reminder_sent: {
+    args: [reminderId: number];
+    return: void;
+  };
+  delete_reminder: {
+    args: [reminderId: number];
+    return: void;
+  };
+
+  // Email Integration
+  save_email_account: {
+    args: [account: EmailAccount];
+    return: number;
+  };
+  get_email_accounts: {
+    args: [];
+    return: EmailAccount[];
+  };
+  delete_email_account: {
+    args: [accountId: number];
+    return: void;
+  };
+  get_email_threads_for_application: {
+    args: [applicationId: number];
+    return: EmailThread[];
+  };
+  link_email_thread_to_application: {
+    args: [threadId: number, applicationId: number];
+    return: void;
+  };
+  get_email_messages_for_thread: {
+    args: [threadId: number];
+    return: EmailMessage[];
+  };
+  test_email_connection: {
+    args: [email: string, password: string, provider: string];
+    return: string;
+  };
+  sync_email_account: {
+    args: [accountId: number];
+    return: string;
+  };
+
+  // Learning Plans
+  analyze_skill_gaps: {
+    args: [jobId: number | null, includeAllJobs: boolean];
+    return: SkillGap[];
+  };
+  create_learning_plan: {
+    args: [
+      title: string,
+      description: string | null,
+      targetJobId: number | null,
+      skillGaps: SkillGap[],
+      estimatedDurationDays: number | null
+    ];
+    return: number; // plan ID
+  };
+  get_learning_plans: {
+    args: [status: string | null];
+    return: LearningPlan[];
+  };
+  get_learning_tracks: {
+    args: [learningPlanId: number];
+    return: LearningTrack[];
+  };
+  get_learning_tasks: {
+    args: [learningTrackId: number];
+    return: LearningTask[];
+  };
+  create_learning_track: {
+    args: [
+      learningPlanId: number,
+      title: string,
+      description: string | null,
+      skillFocus: string | null,
+      orderIndex: number
+    ];
+    return: number; // track ID
+  };
+  create_learning_task: {
+    args: [
+      learningTrackId: number,
+      title: string,
+      description: string | null,
+      taskType: string,
+      resourceUrl: string | null,
+      estimatedHours: number | null,
+      dueDate: string | null,
+      orderIndex: number
+    ];
+    return: number; // task ID
+  };
+  complete_learning_task: {
+    args: [taskId: number, completed: boolean];
+    return: void;
+  };
+  add_learning_resource: {
+    args: [
+      learningTaskId: number | null,
+      title: string,
+      url: string | null,
+      resourceType: string,
+      description: string | null
+    ];
+    return: number; // resource ID
+  };
+  get_learning_resources: {
+    args: [learningTaskId: number];
+    return: LearningResource[];
+  };
+  delete_learning_plan: {
+    args: [planId: number];
+    return: void;
+  };
+  update_learning_plan_status: {
+    args: [planId: number, status: string];
+    return: void;
+  };
+  generate_learning_content: {
+    args: [learningPlanId: number, skillGaps: SkillGap[]];
+    return: void;
+  };
+
+  // Recruiter CRM
+  create_recruiter_contact: {
+    args: [
+      name: string,
+      email: string | null,
+      phone: string | null,
+      linkedinUrl: string | null,
+      company: string | null,
+      title: string | null,
+      notes: string | null,
+      relationshipStrength: string | null,
+      tags: string | null
+    ];
+    return: number; // contact ID
+  };
+  get_recruiter_contacts: {
+    args: [companyFilter: string | null, searchQuery: string | null];
+    return: RecruiterContact[];
+  };
+  get_recruiter_contact: {
+    args: [contactId: number];
+    return: RecruiterContact;
+  };
+  update_recruiter_contact: {
+    args: [
+      contactId: number,
+      name: string | null,
+      email: string | null,
+      phone: string | null,
+      linkedinUrl: string | null,
+      company: string | null,
+      title: string | null,
+      notes: string | null,
+      relationshipStrength: string | null,
+      tags: string | null
+    ];
+    return: void;
+  };
+  delete_recruiter_contact: {
+    args: [contactId: number];
+    return: void;
+  };
+  create_interaction: {
+    args: [
+      contactId: number,
+      interactionType: string,
+      interactionDate: string,
+      subject: string | null,
+      notes: string | null,
+      linkedApplicationId: number | null,
+      linkedJobId: number | null,
+      outcome: string | null,
+      followUpDate: string | null
+    ];
+    return: number; // interaction ID
+  };
+  get_interactions_for_contact: {
+    args: [contactId: number];
+    return: RecruiterInteraction[];
+  };
+  get_interactions_for_application: {
+    args: [applicationId: number];
+    return: RecruiterInteraction[];
+  };
+  link_contact_to_application: {
+    args: [contactId: number, applicationId: number, role: string | null, notes: string | null];
+    return: number; // link ID
+  };
+  get_contacts_for_application: {
+    args: [applicationId: number];
+    return: RecruiterContact[];
+  };
+  get_applications_for_contact: {
+    args: [contactId: number];
+    return: number[];
+  };
+  unlink_contact_from_application: {
+    args: [contactId: number, applicationId: number];
+    return: void;
+  };
+  delete_interaction: {
+    args: [interactionId: number];
+    return: void;
+  };
+
+  // Cache Management
+  get_cache_stats: {
+    args: [];
+    return: CacheStats;
+  };
+  clear_cache_by_purpose: {
+    args: [purpose: string];
+    return: number; // count of deleted entries
+  };
+  clear_all_cache: {
+    args: [];
+    return: number; // count of deleted entries
+  };
+  cleanup_expired_cache: {
+    args: [];
+    return: number; // count of deleted entries
+  };
+  evict_cache_by_size: {
+    args: [maxSizeMb: number];
+    return: number; // count of evicted entries
+  };
+  evict_cache_by_count: {
+    args: [maxEntries: number];
+    return: number; // count of evicted entries
+  };
+}
+
+// ============================================================================
+// Reminder Types
+// ============================================================================
+
+export interface Reminder {
+  id?: number;
+  applicationId?: number;
+  eventId?: number;
+  reminderType: string;
+  reminderDate: string;
+  message?: string;
+  isSent: boolean;
+  sentAt?: string;
+  createdAt: string;
+}
+
+// ============================================================================
+// Email Types
+// ============================================================================
+
+export interface EmailAccount {
+  id?: number;
+  emailAddress: string;
+  provider: string;
+  imapServer?: string;
+  imapPort?: number;
+  smtpServer?: string;
+  smtpPort?: number;
+  useSsl: boolean;
+  isActive: boolean;
+  lastSyncAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmailThread {
+  id?: number;
+  applicationId?: number;
+  threadId: string;
+  subject?: string;
+  participants?: string;
+  lastMessageDate?: string;
+  messageCount: number;
+  isArchived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmailMessage {
+  id?: number;
+  threadId: number;
+  emailAccountId: number;
+  messageId: string;
+  fromAddress?: string;
+  toAddress?: string;
+  subject?: string;
+  bodyText?: string;
+  bodyHtml?: string;
+  receivedDate: string;
+  isRead: boolean;
+  isApplicationEvent: boolean;
+  eventType?: string;
+  extractedData?: string;
+  createdAt: string;
+}
+
+// ============================================================================
+// Learning Plan Types
+// ============================================================================
+
+export interface SkillGap {
+  skill: string;
+  frequency: number;
+  priority: "high" | "medium" | "low";
+  userHasSkill: boolean;
+  userRating?: number;
+}
+
+export interface LearningPlan {
+  id?: number;
+  title: string;
+  description?: string;
+  targetJobId?: number;
+  skillGaps?: string; // JSON string
+  estimatedDurationDays?: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LearningTrack {
+  id?: number;
+  learningPlanId: number;
+  title: string;
+  description?: string;
+  skillFocus?: string;
+  orderIndex: number;
+  createdAt: string;
+}
+
+export interface LearningTask {
+  id?: number;
+  learningTrackId: number;
+  title: string;
+  description?: string;
+  taskType: string;
+  resourceUrl?: string;
+  estimatedHours?: number;
+  completed: boolean;
+  completedAt?: string;
+  dueDate?: string;
+  orderIndex: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LearningResource {
+  id?: number;
+  learningTaskId?: number;
+  title: string;
+  url?: string;
+  resourceType: string;
+  description?: string;
+  createdAt: string;
+}
+
+// ============================================================================
+// Recruiter CRM Types
+// ============================================================================
+
+export interface RecruiterContact {
+  id?: number;
+  name: string;
+  email?: string;
+  phone?: string;
+  linkedinUrl?: string;
+  company?: string;
+  title?: string;
+  notes?: string;
+  relationshipStrength: string;
+  lastContactDate?: string;
+  tags?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecruiterInteraction {
+  id?: number;
+  contactId: number;
+  interactionType: string;
+  interactionDate: string;
+  subject?: string;
+  notes?: string;
+  linkedApplicationId?: number;
+  linkedJobId?: number;
+  outcome?: string;
+  followUpDate?: string;
+  createdAt: string;
+}
+
+export interface ContactApplicationLink {
+  id?: number;
+  contactId: number;
+  applicationId: number;
+  role?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+// ============================================================================
+// Cache Management Types
+// ============================================================================
+
+export interface CacheStats {
+  totalEntries: number;
+  totalSizeBytes: number;
+  entriesByPurpose: Record<string, number>;
+  expiredEntries: number;
+  oldestEntry?: string;
+  newestEntry?: string;
 }
 
 /**

@@ -72,6 +72,37 @@ interface Job {
   company?: string;
 }
 
+interface PortfolioItem {
+  id?: number;
+  title: string;
+  url?: string;
+  description?: string;
+  role?: string;
+  tech_stack?: string;
+  highlighted: boolean;
+}
+
+interface EmailThread {
+  id?: number;
+  applicationId?: number;
+  threadId: string;
+  subject?: string;
+  participants?: string;
+  lastMessageDate?: string;
+  messageCount: number;
+  isArchived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface PaginatedApplicationList {
+  applications: ApplicationSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 export default function Applications() {
   const [applications, setApplications] = useState<ApplicationSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -81,27 +112,41 @@ export default function Applications() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [availableJobs, setAvailableJobs] = useState<Job[]>([]);
   const [viewMode, setViewMode] = useState<"kanban" | "table">("kanban");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(50);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
     loadApplications();
     loadAvailableJobs();
-  }, [selectedStatus]);
+  }, [selectedStatus, currentPage]);
 
   async function loadApplications() {
     setIsLoading(true);
     setError(null);
     try {
-      const result = await invoke<ApplicationSummary[]>("get_applications", {
+      const result = await invoke<PaginatedApplicationList>("get_applications", {
         status: selectedStatus === "all" ? null : selectedStatus,
         jobId: null,
         activeOnly: true,
+        page: currentPage,
+        pageSize: pageSize,
       });
-      setApplications(result);
+      setApplications(result.applications);
+      setTotal(result.total);
+      setTotalPages(result.total_pages);
     } catch (err: any) {
       setError(err?.message || "Failed to load applications");
     } finally {
       setIsLoading(false);
     }
+  }
+
+  function handlePageChange(newPage: number) {
+    setCurrentPage(newPage);
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   async function loadAvailableJobs() {
@@ -436,6 +481,27 @@ export default function Applications() {
                   )}
                 </tbody>
               </table>
+              {totalPages > 1 && (
+                <div className="pagination">
+                  <button
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
+                    aria-label="Previous page"
+                  >
+                    Previous
+                  </button>
+                  <span className="pagination-info">
+                    Page {currentPage} of {totalPages} ({total} total)
+                  </span>
+                  <button
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage >= totalPages}
+                    aria-label="Next page"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="list-view">
@@ -570,12 +636,20 @@ function ApplicationDetailView({
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null);
   const [isLoadingArtifacts, setIsLoadingArtifacts] = useState(false);
+  const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>([]);
+  const [linkedPortfolioIds, setLinkedPortfolioIds] = useState<number[]>([]);
+  const [isLoadingPortfolio, setIsLoadingPortfolio] = useState(false);
+  const [showPortfolioLinkModal, setShowPortfolioLinkModal] = useState(false);
+  const [emailThreads, setEmailThreads] = useState<EmailThread[]>([]);
+  const [isLoadingEmailThreads, setIsLoadingEmailThreads] = useState(false);
   const [timelineFilter, setTimelineFilter] = useState<string>("all");
   const [timelineSort, setTimelineSort] = useState<"newest" | "oldest">("newest");
 
   useEffect(() => {
     setFormData(detail.application);
     loadArtifacts();
+    loadPortfolio();
+    loadEmailThreads();
   }, [detail]);
 
   async function loadArtifacts() {
@@ -590,6 +664,56 @@ function ApplicationDetailView({
       console.error("Failed to load artifacts:", err);
     } finally {
       setIsLoadingArtifacts(false);
+    }
+  }
+
+  async function loadPortfolio() {
+    if (!detail.application.id) return;
+    setIsLoadingPortfolio(true);
+    try {
+      // Load all portfolio items
+      const profileData = await invoke<{ portfolio: PortfolioItem[] }>("get_user_profile_data");
+      setPortfolioItems(profileData.portfolio);
+
+      // Load linked portfolio items
+      const linked = await invoke<PortfolioItem[]>("get_portfolio_for_application", {
+        application_id: detail.application.id,
+      });
+      setLinkedPortfolioIds(linked.map(p => p.id!).filter((id): id is number => id !== undefined));
+    } catch (err: any) {
+      console.error("Failed to load portfolio:", err);
+    } finally {
+      setIsLoadingPortfolio(false);
+    }
+  }
+
+  async function savePortfolioLinks() {
+    if (!detail.application.id) return;
+    try {
+      await invoke("link_portfolio_to_application", {
+        application_id: detail.application.id,
+        portfolio_item_ids: linkedPortfolioIds,
+      });
+      showToast("Portfolio links updated", "success");
+      setShowPortfolioLinkModal(false);
+      loadPortfolio();
+    } catch (err: any) {
+      showToast(err?.message || "Failed to update portfolio links", "error");
+    }
+  }
+
+  async function loadEmailThreads() {
+    if (!detail.application.id) return;
+    setIsLoadingEmailThreads(true);
+    try {
+      const threads = await invoke<EmailThread[]>("get_email_threads_for_application", {
+        application_id: detail.application.id,
+      });
+      setEmailThreads(threads);
+    } catch (err: any) {
+      console.error("Failed to load email threads:", err);
+    } finally {
+      setIsLoadingEmailThreads(false);
     }
   }
 
@@ -1030,6 +1154,42 @@ function ApplicationDetailView({
           )}
         </div>
 
+        {/* Email Threads Section */}
+        <div className="detail-section">
+          <div className="section-header-with-edit">
+            <h3>Email Threads</h3>
+          </div>
+          <hr className="section-divider" />
+          {isLoadingEmailThreads ? (
+            <div className="empty-text">Loading email threads...</div>
+          ) : emailThreads.length === 0 ? (
+            <div className="empty-text">No email threads linked to this application. Connect your email in Settings to automatically track application-related emails.</div>
+          ) : (
+            <div className="email-threads-list">
+              {emailThreads.map((thread) => (
+                <div key={thread.id} className="email-thread-card" style={{ padding: "1rem", border: "1px solid #e5e7eb", borderRadius: "0.5rem", marginBottom: "0.75rem" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
+                    <div>
+                      <div style={{ fontWeight: "600", marginBottom: "0.25rem" }}>{thread.subject || "No Subject"}</div>
+                      {thread.participants && (
+                        <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>{thread.participants}</div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>
+                      {thread.messageCount} message{thread.messageCount !== 1 ? "s" : ""}
+                    </div>
+                  </div>
+                  {thread.lastMessageDate && (
+                    <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
+                      Last message: {new Date(thread.lastMessageDate).toLocaleDateString()}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="detail-section">
           <div className="section-header">
             <h3>Timeline</h3>
@@ -1226,6 +1386,79 @@ function ApplicationDetailView({
           }}
         />
       )}
+
+      {showPortfolioLinkModal && (
+        <PortfolioLinkModal
+          portfolioItems={portfolioItems}
+          linkedIds={linkedPortfolioIds}
+          onUpdate={(ids) => setLinkedPortfolioIds(ids)}
+          onSave={savePortfolioLinks}
+          onClose={() => setShowPortfolioLinkModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function PortfolioLinkModal({
+  portfolioItems,
+  linkedIds,
+  onUpdate,
+  onSave,
+  onClose,
+}: {
+  portfolioItems: PortfolioItem[];
+  linkedIds: number[];
+  onUpdate: (ids: number[]) => void;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  function togglePortfolioItem(id: number) {
+    if (linkedIds.includes(id)) {
+      onUpdate(linkedIds.filter(lid => lid !== id));
+    } else {
+      onUpdate([...linkedIds, id]);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>Link Portfolio Items</h3>
+          <button onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="modal-body">
+          {portfolioItems.length === 0 ? (
+            <p>No portfolio items available. Add portfolio items in your Profile.</p>
+          ) : (
+            <div className="portfolio-link-list">
+              {portfolioItems.map((item) => (
+                <label key={item.id} className="portfolio-link-item">
+                  <input
+                    type="checkbox"
+                    checked={item.id ? linkedIds.includes(item.id) : false}
+                    onChange={() => item.id && togglePortfolioItem(item.id)}
+                  />
+                  <div className="portfolio-link-info">
+                    <div className="portfolio-link-title">
+                      {item.title}
+                      {item.highlighted && <span className="highlight-badge">★</span>}
+                    </div>
+                    {item.role && (
+                      <div className="portfolio-link-role">{item.role}</div>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="modal-actions">
+          <button onClick={onClose}>Cancel</button>
+          <button onClick={onSave} className="save-button">Save</button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -17,6 +17,13 @@ mod data_deletion;
 mod local_storage;
 mod profile_import;
 mod job_scraper;
+mod calendar;
+mod reminders;
+mod portfolio_export;
+mod analytics;
+mod email;
+mod learning;
+mod recruiter_crm;
 
 use db::init_database;
 
@@ -39,6 +46,8 @@ async fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             commands::get_dashboard_data,
             commands::get_user_profile_data,
@@ -89,6 +98,66 @@ async fn main() {
             commands::extract_resume_text,
             commands::extract_profile_from_resume,
             commands::scrape_job_url,
+            commands::get_cache_stats,
+            commands::clear_cache_by_purpose,
+            commands::clear_all_cache,
+            commands::cleanup_expired_cache,
+            commands::evict_cache_by_size,
+            commands::evict_cache_by_count,
+            commands::export_dashboard_data,
+            commands::get_calendar_events,
+            commands::get_events_for_date,
+            commands::sync_interview_to_calendar,
+            commands::create_reminder,
+            commands::get_reminders,
+            commands::get_due_reminders,
+            commands::get_reminders_for_application,
+            commands::mark_reminder_sent,
+            commands::delete_reminder,
+            commands::export_portfolio_html,
+            commands::export_portfolio_markdown,
+            commands::export_portfolio_text,
+            commands::get_portfolio_for_application,
+            commands::link_portfolio_to_application,
+            commands::get_applications_for_portfolio,
+            commands::get_conversion_rates,
+            commands::get_time_in_stage,
+            commands::get_channel_effectiveness,
+            commands::get_analytics_insights,
+            commands::save_email_account,
+            commands::get_email_accounts,
+            commands::delete_email_account,
+            commands::get_email_threads_for_application,
+            commands::link_email_thread_to_application,
+            commands::get_email_messages_for_thread,
+            commands::test_email_connection,
+            commands::sync_email_account,
+            commands::analyze_skill_gaps,
+            commands::create_learning_plan,
+            commands::get_learning_plans,
+            commands::get_learning_tracks,
+            commands::get_learning_tasks,
+            commands::create_learning_track,
+            commands::create_learning_task,
+            commands::complete_learning_task,
+            commands::add_learning_resource,
+            commands::get_learning_resources,
+            commands::delete_learning_plan,
+            commands::update_learning_plan_status,
+            commands::generate_learning_content,
+            commands::create_recruiter_contact,
+            commands::get_recruiter_contacts,
+            commands::get_recruiter_contact,
+            commands::update_recruiter_contact,
+            commands::delete_recruiter_contact,
+            commands::create_interaction,
+            commands::get_interactions_for_contact,
+            commands::get_interactions_for_application,
+            commands::link_contact_to_application,
+            commands::get_contacts_for_application,
+            commands::get_applications_for_contact,
+            commands::unlink_contact_from_application,
+            commands::delete_interaction,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
