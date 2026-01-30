@@ -24,6 +24,7 @@ mod analytics;
 mod email;
 mod learning;
 mod recruiter_crm;
+mod companies;
 
 use db::init_database;
 
@@ -158,6 +159,22 @@ async fn main() {
             commands::get_applications_for_contact,
             commands::unlink_contact_from_application,
             commands::delete_interaction,
+            commands::create_company,
+            commands::get_companies,
+            commands::get_companies_with_stats,
+            commands::get_company,
+            commands::update_company,
+            commands::delete_company,
+            commands::link_job_to_company,
+            commands::link_application_to_company,
+            commands::unlink_job_from_company,
+            commands::unlink_application_from_company,
+            commands::fetch_company_info_from_url,
+            commands::clear_company_fetch_cache,
+            commands::download_model,
+            commands::cleanup_invalid_model_files,
+            commands::clear_invalid_model_path,
+            commands::find_model_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

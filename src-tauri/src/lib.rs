@@ -22,4 +22,5 @@ pub mod analytics;
 pub mod email;
 pub mod learning;
 pub mod recruiter_crm;
+pub mod companies;
 

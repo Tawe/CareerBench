@@ -88,6 +88,16 @@ export default function Layout({ children }: LayoutProps) {
       )
     },
     { 
+      path: "/companies", 
+      label: "Companies",
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+          <polyline points="9 22 9 12 15 12 15 22"></polyline>
+        </svg>
+      )
+    },
+    { 
       path: "/profile", 
       label: "Profile",
       icon: (
@@ -172,6 +182,13 @@ export default function Layout({ children }: LayoutProps) {
       description: "Manage recruiter contacts and interactions",
       category: "navigation" as const,
       action: () => navigate("/recruiters"),
+    },
+    {
+      id: "companies",
+      label: "Go to Companies",
+      description: "Manage company information and links",
+      category: "navigation" as const,
+      action: () => navigate("/companies"),
     },
     {
       id: "settings",

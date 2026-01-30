@@ -138,7 +138,22 @@ pub fn load_ai_settings() -> Result<AiSettings, String> {
     });
     
     match settings_result {
-        Ok(settings) => Ok(settings),
+        Ok(mut settings) => {
+            // Auto-cleanup: If local_model_path contains query parameters, clear it
+            if let Some(ref path_str) = settings.local_model_path {
+                if path_str.contains('?') {
+                    log::warn!("Auto-clearing invalid model path from settings: {}", path_str);
+                    settings.local_model_path = None;
+                    // Save the cleaned settings back
+                    if let Err(e) = save_ai_settings(&settings) {
+                        log::error!("Failed to save cleaned settings: {}", e);
+                    } else {
+                        log::info!("Successfully auto-cleared invalid model path from settings");
+                    }
+                }
+            }
+            Ok(settings)
+        }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(AiSettings::default()),
         Err(e) => Err(format!("Failed to load settings: {}", e)),
     }

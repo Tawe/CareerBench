@@ -178,6 +178,34 @@ fn run_migrations(conn: &Connection) -> Result<()> {
         )?;
     }
 
+    // Run migration 010 - Companies
+    let migration_name = "010_companies";
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM migrations WHERE name = ?")?;
+    let count: i64 = stmt.query_row([migration_name], |row| row.get(0))?;
+    
+    if count == 0 {
+        println!("Running migration: {}", migration_name);
+        migration_010_companies(conn)?;
+        conn.execute(
+            "INSERT INTO migrations (name, applied_at) VALUES (?, datetime('now'))",
+            [migration_name],
+        )?;
+    }
+
+    // Run migration 011 - Companies mission/vision/values
+    let migration_name = "011_companies_mission_vision_values";
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM migrations WHERE name = ?")?;
+    let count: i64 = stmt.query_row([migration_name], |row| row.get(0))?;
+    
+    if count == 0 {
+        println!("Running migration: {}", migration_name);
+        migration_011_companies_mission_vision_values(conn)?;
+        conn.execute(
+            "INSERT INTO migrations (name, applied_at) VALUES (?, datetime('now'))",
+            [migration_name],
+        )?;
+    }
+
     Ok(())
 }
 
@@ -918,6 +946,78 @@ pub fn migration_009_dashboard_optimization(conn: &Connection) -> Result<()> {
          ON applications (date_saved DESC, status)",
         [],
     )?;
+
+    Ok(())
+}
+
+pub fn migration_010_companies(conn: &Connection) -> Result<()> {
+    // Companies table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS companies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            website TEXT,
+            industry TEXT,
+            company_size TEXT,
+            location TEXT,
+            description TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        [],
+    )?;
+
+    // Add company_id to jobs table
+    conn.execute(
+        "ALTER TABLE jobs ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL",
+        [],
+    ).ok(); // Ignore error if column already exists
+
+    // Add company_id to applications table (for direct access, though it can also be accessed via jobs)
+    conn.execute(
+        "ALTER TABLE applications ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL",
+        [],
+    ).ok(); // Ignore error if column already exists
+
+    // Indexes
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_companies_name 
+         ON companies (name)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_company_id 
+         ON jobs (company_id)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_applications_company_id 
+         ON applications (company_id)",
+        [],
+    )?;
+
+    Ok(())
+}
+
+pub fn migration_011_companies_mission_vision_values(conn: &Connection) -> Result<()> {
+    // Add mission, vision, and values columns to companies table
+    conn.execute(
+        "ALTER TABLE companies ADD COLUMN mission TEXT",
+        [],
+    ).ok(); // Ignore error if column already exists
+
+    conn.execute(
+        "ALTER TABLE companies ADD COLUMN vision TEXT",
+        [],
+    ).ok(); // Ignore error if column already exists
+
+    conn.execute(
+        "ALTER TABLE companies ADD COLUMN \"values\" TEXT",
+        [],
+    ).ok(); // Ignore error if column already exists
 
     Ok(())
 }

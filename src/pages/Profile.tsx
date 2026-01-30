@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { InlineEditable } from "../components/InlineEditable";
 import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { showToast } from "../components/Toast";
@@ -265,47 +266,72 @@ export default function Profile() {
 
   async function handleImportResume() {
     try {
+      console.log("Opening file picker...");
+      
       // Open file picker using Tauri dialog plugin
-      const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({
         multiple: false,
         filters: [{
           name: "Resume Files",
-          extensions: ["pdf", "txt", "docx"]
+          extensions: ["pdf", "txt", "docx", "doc"]
         }],
         title: "Select Resume/CV File"
       });
 
+      console.log("File picker result:", selected);
+
       if (!selected) {
         // User cancelled
+        console.log("User cancelled file selection");
         return;
       }
 
-      // Handle both string (single file) and FileSelected (with path property) return types
-      const filePath = typeof selected === "string" ? selected : (selected as { path: string }).path;
+      // Handle different return types from Tauri dialog
+      // In Tauri 2.0, open() returns string | string[] | null for file selection
+      let filePath: string;
       
-      if (!filePath) {
+      if (typeof selected === "string") {
+        filePath = selected;
+      } else if (Array.isArray(selected) && selected.length > 0) {
+        filePath = selected[0];
+      } else {
+        console.error("Unexpected file selection result:", selected);
+        showToast("Unexpected file selection format", "error");
+        return;
+      }
+      
+      if (!filePath || filePath.trim() === "") {
         showToast("No file selected", "info");
         return;
       }
+      
+      console.log("Selected file path:", filePath);
 
       showToast("Extracting text from resume...", "info");
+      setIsImporting(true);
 
-      // Extract text from resume
-      const parsed = await invoke<{ text: string; file_path: string }>("extract_resume_text", {
-        filePath
-      });
-
-      showToast("Extracting profile data with AI...", "info");
-
-      // Extract profile data using AI
       try {
-        // Process with AI
-        setIsImporting(true);
+        // Extract text from resume
+        console.log("Calling extract_resume_text with path:", filePath);
+        const parsed = await invoke<{ text: string; file_path: string }>("extract_resume_text", {
+          filePath
+        });
+
+        console.log("Text extracted, length:", parsed.text.length);
+
+        if (!parsed.text || parsed.text.trim().length === 0) {
+          throw new Error("No text could be extracted from the resume file. The file might be empty or corrupted.");
+        }
+
+        showToast("Extracting profile data with AI...", "info");
+
+        // Extract profile data using AI
         try {
           const extracted = await invoke<UserProfileData>("extract_profile_from_resume", {
             resumeText: parsed.text
           });
+
+          console.log("Profile extracted:", extracted);
 
           // Merge extracted data with existing data
           setData((prev) => ({
@@ -321,24 +347,69 @@ export default function Profile() {
           setShowImportModal(false);
         } catch (aiErr: any) {
           console.error("Error processing resume with AI:", aiErr);
-          setImportError(aiErr?.message || "Failed to process resume with AI.");
-          showToast(aiErr?.message || "Failed to process resume with AI.", "error");
-        } finally {
-          setIsImporting(false);
+          const errorMsg = aiErr?.message || "Failed to process resume with AI.";
+          
+          // Check if the error is about invalid model filename/path and automatically clean it up
+          // The error message may be prefixed with "AI error on chunk X: " or "Failed to resolve provider: "
+          const hasQueryParams = errorMsg.includes("?download=true") || errorMsg.includes("query parameters");
+          const isInvalidModelError = (errorMsg.includes("Invalid model filename") || 
+                                      errorMsg.includes("Invalid model path") ||
+                                      errorMsg.includes("Model file not found")) && 
+                                     hasQueryParams;
+          
+          if (isInvalidModelError) {
+            console.log("Detected invalid model file/path, attempting to clean up...");
+            try {
+              // Clean up invalid files
+              const cleaned = await invoke<string[]>("cleanup_invalid_model_files");
+              if (cleaned && cleaned.length > 0) {
+                console.log(`Cleaned up ${cleaned.length} invalid model file(s):`, cleaned);
+              }
+              
+              // Clear invalid path from settings
+              const pathCleared = await invoke<boolean>("clear_invalid_model_path");
+              if (pathCleared) {
+                console.log("Cleared invalid model path from settings");
+              }
+              
+              showToast(
+                `Cleaned up invalid model file and path. Please go to Settings and download the model again, then try importing your resume.`,
+                "info"
+              );
+              setImportError(
+                "Invalid model file and path detected and removed. Please go to Settings and download the model again, then try importing your resume."
+              );
+            } catch (cleanupErr: any) {
+              console.error("Failed to clean up invalid model files/path:", cleanupErr);
+              setImportError(
+                `${errorMsg}\n\nPlease go to Settings, clear the model path, and re-download the model.`
+              );
+              showToast("Failed to automatically clean up. Please clear the model path in Settings and re-download.", "error");
+            }
+          } else {
+            setImportError(errorMsg);
+            showToast(errorMsg, "error");
+          }
+          
+          // If AI fails but text was extracted, show the text so user can see what was extracted
+          if (parsed.text) {
+            console.log("Extracted text (AI processing failed):", parsed.text.substring(0, 500));
+          }
         }
-      } catch (aiErr: any) {
-        // AI extraction might not be fully implemented yet
-        if (aiErr?.message?.includes("not yet fully implemented")) {
-          showToast("Text extracted, but AI extraction is not yet available. You can manually review the extracted text.", "warning");
-          // Show the extracted text in a modal or alert for user to review
-          console.log("Extracted text:", parsed.text);
-        } else {
-          throw aiErr;
-        }
+      } catch (extractErr: any) {
+        console.error("Error extracting text from resume:", extractErr);
+        const errorMsg = extractErr?.message || "Failed to extract text from resume file.";
+        setImportError(errorMsg);
+        showToast(errorMsg, "error");
+      } finally {
+        setIsImporting(false);
       }
     } catch (err: any) {
-      showToast(err?.message || "Failed to import resume", "error");
       console.error("Import error:", err);
+      const errorMsg = err?.message || "Failed to import resume. Please check the console for details.";
+      showToast(errorMsg, "error");
+      setImportError(errorMsg);
+      setIsImporting(false);
     }
   }
 
@@ -720,7 +791,7 @@ function ExperienceSection({
     
     setLocalErrors({});
 
-    let updated = [...experience];
+    const updated = [...experience];
     if (editingIndex === "new") {
       // Adding new experience
       updated.push({ ...formData });
@@ -1097,7 +1168,7 @@ function SkillsSection({
       notes: JSON.stringify({ links }),
     };
 
-    let updated = [...skills];
+    const updated = [...skills];
     if (editingIndex == null) {
       // New skill
       updated.push(skillToSave);
@@ -1456,7 +1527,7 @@ function EducationSection({
     }
     
     setLocalErrors({});
-    let updated = [...education];
+    const updated = [...education];
     if (editingEduId === "new") {
       updated.push({ ...eduFormData });
     } else {
@@ -1513,7 +1584,7 @@ function EducationSection({
     }
     
     setLocalErrors({});
-    let updated = [...certifications];
+    const updated = [...certifications];
     if (editingCertId === "new") {
       updated.push({ ...certFormData });
     } else {
@@ -1907,7 +1978,7 @@ function PortfolioSection({
     }
     
     setLocalErrors({});
-    let updated = [...portfolio];
+    const updated = [...portfolio];
     if (editingId === "new") {
       updated.push({ ...formData });
     } else {

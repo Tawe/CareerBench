@@ -284,7 +284,10 @@ impl AiProvider for LocalProvider {
         let full_prompt = format!("{}\n\n{}", system, user_prompt);
         
         // Run inference directly to get raw text response
-        let response = model.generate(&full_prompt, 2000).await?;
+        // Use 300 tokens max - enough for JSON but prevents long prose generation
+        // This helps prevent the model from generating repetitive text
+        log::info!("[LocalProvider] Running inference with max_tokens=300");
+        let response = model.generate(&full_prompt, 300).await?;
         
         // Extract JSON from response (handles markdown code blocks)
         let json_str = Self::extract_json_from_response(&response);

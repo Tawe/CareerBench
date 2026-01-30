@@ -1,28 +1,72 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { lazy, Suspense } from "react";
 import Layout from "./components/Layout";
-import Dashboard from "./pages/Dashboard";
-import Profile from "./pages/Profile";
-import Jobs from "./pages/Jobs";
-import Applications from "./pages/Applications";
-import Calendar from "./pages/Calendar";
-import Settings from "./pages/Settings";
-import Learning from "./pages/Learning";
-import Recruiters from "./pages/Recruiters";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { LoadingSkeleton } from "./components/LoadingSkeleton";
+
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Profile = lazy(() => import("./pages/Profile"));
+const Jobs = lazy(() => import("./pages/Jobs"));
+const Applications = lazy(() => import("./pages/Applications"));
+const Calendar = lazy(() => import("./pages/Calendar"));
+const Settings = lazy(() => import("./pages/Settings"));
+const Learning = lazy(() => import("./pages/Learning"));
+const Recruiters = lazy(() => import("./pages/Recruiters"));
+const Companies = lazy(() => import("./pages/Companies"));
 
 function App() {
   return (
     <BrowserRouter>
       <Layout>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/profile" element={<Profile />} />
-          <Route path="/jobs" element={<Jobs />} />
-          <Route path="/applications" element={<Applications />} />
-          <Route path="/calendar" element={<Calendar />} />
-          <Route path="/learning" element={<Learning />} />
-          <Route path="/recruiters" element={<Recruiters />} />
-          <Route path="/settings" element={<Settings />} />
-        </Routes>
+        <Suspense fallback={<LoadingSkeleton variant="card" lines={3} />}>
+          <Routes>
+            <Route path="/" element={
+              <ErrorBoundary>
+                <Dashboard />
+              </ErrorBoundary>
+            } />
+            <Route path="/profile" element={
+              <ErrorBoundary>
+                <Profile />
+              </ErrorBoundary>
+            } />
+            <Route path="/jobs" element={
+              <ErrorBoundary>
+                <Jobs />
+              </ErrorBoundary>
+            } />
+            <Route path="/applications" element={
+              <ErrorBoundary>
+                <Applications />
+              </ErrorBoundary>
+            } />
+            <Route path="/calendar" element={
+              <ErrorBoundary>
+                <Calendar />
+              </ErrorBoundary>
+            } />
+            <Route path="/learning" element={
+              <ErrorBoundary>
+                <Learning />
+              </ErrorBoundary>
+            } />
+            <Route path="/recruiters" element={
+              <ErrorBoundary>
+                <Recruiters />
+              </ErrorBoundary>
+            } />
+            <Route path="/companies" element={
+              <ErrorBoundary>
+                <Companies />
+              </ErrorBoundary>
+            } />
+            <Route path="/settings" element={
+              <ErrorBoundary>
+                <Settings />
+              </ErrorBoundary>
+            } />
+          </Routes>
+        </Suspense>
       </Layout>
     </BrowserRouter>
   );

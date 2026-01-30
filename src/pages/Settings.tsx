@@ -22,12 +22,40 @@ export default function Settings() {
   });
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
   const [isLoadingCacheStats, setIsLoadingCacheStats] = useState(false);
+  const [isDownloadingModel, setIsDownloadingModel] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<string | null>(null);
+  const [customModelUrl, setCustomModelUrl] = useState<string>("");
+  const [availableModelFiles, setAvailableModelFiles] = useState<string[]>([]);
 
   useEffect(() => {
     loadSettings();
     loadEmailAccounts();
     loadCacheStats();
+    findModelFiles();
   }, []);
+
+  async function findModelFiles() {
+    try {
+      const files = await invoke<string[]>("find_model_files");
+      setAvailableModelFiles(files);
+      console.log("Found model files:", files);
+    } catch (err: any) {
+      console.error("Failed to find model files:", err);
+    }
+  }
+
+  async function useDetectedModel(modelPath: string) {
+    if (!settings) return;
+    
+    try {
+      const updatedSettings = { ...settings, localModelPath: modelPath };
+      await invoke("save_ai_settings", { settings: updatedSettings });
+      setSettings(updatedSettings);
+      showToast("Model path set successfully!", "success");
+    } catch (err: any) {
+      showToast(`Failed to set model path: ${err.message || err}`, "error");
+    }
+  }
 
   async function loadSettings() {
     setIsLoading(true);
@@ -219,6 +247,72 @@ export default function Settings() {
     }
   }
 
+  async function handleDownloadModel() {
+    console.log("handleDownloadModel called");
+    
+    // Require custom URL now since default URLs don't work
+    if (!customModelUrl.trim()) {
+      showToast("Please enter a model URL from Hugging Face", "error");
+      setError("Please enter a model URL. Visit the Hugging Face model page and copy the direct download link for a GGUF file.");
+      return;
+    }
+    
+    setIsDownloadingModel(true);
+    setDownloadProgress("Starting download... This may take several minutes (~2.3GB)");
+    setError(null);
+    
+    try {
+      const modelUrl = customModelUrl.trim();
+      console.log("Calling download_model with URL:", modelUrl);
+      const result = await invoke<string>("download_model", { modelUrl: modelUrl });
+      console.log("Download result:", result);
+      
+      // The result is the file path
+      if (result) {
+        setDownloadProgress("Download complete!");
+        
+        // Always save the path, even if settings is null (it will be loaded first)
+        try {
+          // Load current settings first to preserve other settings
+          const currentSettings = await invoke<AiSettings>("get_ai_settings");
+          const updatedSettings = { ...currentSettings, localModelPath: result };
+          
+          // Save the updated settings
+          await invoke("save_ai_settings", { settings: updatedSettings });
+          
+          // Update local state
+          if (settings) {
+            setSettings({ ...settings, localModelPath: result });
+          } else {
+            // Reload settings if they weren't loaded
+            const reloaded = await invoke<AiSettings>("get_ai_settings");
+            setSettings(reloaded);
+          }
+          
+          showToast("Model downloaded successfully! Path has been saved to settings.", "success");
+          
+          // Refresh available model files
+          await findModelFiles();
+        } catch (saveErr: any) {
+          console.error("Failed to save model path to settings:", saveErr);
+          showToast(`Model downloaded but failed to save path: ${saveErr.message || saveErr}. Please manually set the path: ${result}`, "warning");
+          
+          // Still refresh available model files in case the file exists
+          await findModelFiles();
+        }
+      }
+    } catch (err: any) {
+      const errorMsg = err?.message || "Failed to download model";
+      setError(errorMsg);
+      showToast(errorMsg, "error");
+      setDownloadProgress(null);
+    } finally {
+      setIsDownloadingModel(false);
+      // Clear progress message after a delay
+      setTimeout(() => setDownloadProgress(null), 5000);
+    }
+  }
+
   function getProviderSettings(provider: string, email: string): [string, number, boolean] {
     switch (provider.toLowerCase()) {
       case "gmail":
@@ -322,6 +416,96 @@ export default function Settings() {
                   Hugging Face
                 </a>
               </p>
+              {availableModelFiles.length > 0 && !settings.localModelPath && (
+                <div style={{ 
+                  marginTop: "0.75rem",
+                  padding: "0.75rem",
+                  backgroundColor: "#f0fdf4",
+                  border: "1px solid #86efac",
+                  borderRadius: "0.375rem"
+                }}>
+                  <p style={{ margin: "0 0 0.5rem 0", fontSize: "0.875rem", color: "#166534", fontWeight: "500" }}>
+                    ✓ Found {availableModelFiles.length} model file(s):
+                  </p>
+                  {availableModelFiles.map((filePath, idx) => (
+                    <div key={idx} style={{ 
+                      display: "flex", 
+                      alignItems: "center", 
+                      gap: "0.5rem",
+                      marginBottom: "0.5rem"
+                    }}>
+                      <span style={{ fontSize: "0.75rem", color: "#166534", flex: 1, wordBreak: "break-all" }}>
+                        {filePath.split('/').pop()}
+                      </span>
+                      <button
+                        onClick={() => useDetectedModel(filePath)}
+                        className="btn-primary"
+                        style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem" }}
+                        type="button"
+                      >
+                        Use This
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ marginTop: "0.75rem" }}>
+                <div style={{ 
+                  padding: "1rem", 
+                  backgroundColor: "#f0f9ff", 
+                  border: "1px solid #bae6fd", 
+                  borderRadius: "0.375rem",
+                  marginBottom: "1rem"
+                }}>
+                  <p style={{ margin: "0 0 0.75rem 0", fontSize: "0.875rem", color: "#1e40af", fontWeight: "500" }}>
+                    📥 How to Download a Model:
+                  </p>
+                  <ol style={{ margin: "0", paddingLeft: "1.25rem", fontSize: "0.875rem", color: "#1e40af" }}>
+                    <li>Visit <a href="https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/tree/main" target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", textDecoration: "underline" }}>the Hugging Face model page</a></li>
+                    <li>Find a GGUF file (any file ending in <code>.gguf</code>)</li>
+                    <li>Right-click the file → "Copy link address" (should look like: <code>https://huggingface.co/.../resolve/main/...gguf</code>)</li>
+                    <li>Paste the URL below and click Download</li>
+                  </ol>
+                </div>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.75rem" }}>
+                  <input
+                    type="text"
+                    value={customModelUrl}
+                    onChange={(e) => setCustomModelUrl(e.target.value)}
+                    placeholder="https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/...gguf"
+                    style={{ 
+                      flex: "1",
+                      minWidth: "300px",
+                      padding: "0.5rem 0.75rem",
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "0.375rem",
+                      fontSize: "0.875rem"
+                    }}
+                  />
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      console.log("Download button clicked");
+                      handleDownloadModel();
+                    }}
+                    className="btn-primary"
+                    disabled={isDownloadingModel || !customModelUrl.trim()}
+                    type="button"
+                    style={{ fontSize: "0.875rem" }}
+                  >
+                    {isDownloadingModel ? "Downloading..." : "Download Model"}
+                  </button>
+                </div>
+                {downloadProgress && (
+                  <div style={{ fontSize: "0.875rem", color: "#6b7280", marginTop: "0.5rem" }}>
+                    {downloadProgress}
+                  </div>
+                )}
+                <p className="form-help" style={{ marginTop: "0.5rem", fontSize: "0.75rem" }}>
+                  <strong>Tip:</strong> The URL must be a direct download link (containing <code>/resolve/main/</code>), not a page link. 
+                  Recommended files: <code>q4_k_m.gguf</code> (~2.3GB) or <code>q4_0.gguf</code> (~2.2GB) for good balance of quality and size.
+                </p>
+              </div>
             </div>
           </div>
         )}

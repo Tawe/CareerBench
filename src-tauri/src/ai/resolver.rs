@@ -45,9 +45,21 @@ impl ResolvedProvider {
                 let path = model_path.unwrap();
                 log::info!("[ResolvedProvider] Using local model at: {}", path.display());
                 
+                // Check if filename contains query parameters (from buggy downloads)
+                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                    if filename.contains('?') {
+                        let msg = format!(
+                            "Invalid model path in settings: '{}'. The filename contains query parameters from a previous buggy download. Please go to Settings and either:\n1. Clear the model path and re-download the model, or\n2. Manually set a valid model path.",
+                            path.display()
+                        );
+                        log::error!("[ResolvedProvider] {}", msg);
+                        return Err(msg);
+                    }
+                }
+                
                 // Verify path exists
                 if !path.exists() {
-                    let msg = format!("Model file not found at: {}. Please verify the path in Settings.", path.display());
+                    let msg = format!("Model file not found at: {}. Please verify the path in Settings or download a new model.", path.display());
                     log::error!("[ResolvedProvider] {}", msg);
                     return Err(msg);
                 }

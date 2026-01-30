@@ -1037,8 +1037,252 @@ pub async fn delete_interaction(interaction_id: i64) -> Result<(), String> {
         .map_err(|e| e.to_string_for_tauri())
 }
 
+// ============================================================================
+// Companies Commands
+// ============================================================================
+
+/// Create a new company
+#[tauri::command]
+pub async fn create_company(
+    name: String,
+    website: Option<String>,
+    industry: Option<String>,
+    company_size: Option<String>,
+    location: Option<String>,
+    description: Option<String>,
+    mission: Option<String>,
+    vision: Option<String>,
+    values: Option<String>,
+    notes: Option<String>,
+) -> Result<i64, String> {
+    crate::companies::create_company(
+        name,
+        website,
+        industry,
+        company_size,
+        location,
+        description,
+        mission,
+        vision,
+        values,
+        notes,
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get all companies
+#[tauri::command]
+pub async fn get_companies(
+    search_query: Option<String>,
+) -> Result<Vec<crate::companies::Company>, String> {
+    crate::companies::get_companies(search_query.as_deref())
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get companies with statistics (job count, application count)
+#[tauri::command]
+pub async fn get_companies_with_stats(
+    search_query: Option<String>,
+) -> Result<Vec<crate::companies::CompanyWithStats>, String> {
+    crate::companies::get_companies_with_stats(search_query.as_deref())
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Get a single company by ID
+#[tauri::command]
+pub async fn get_company(
+    company_id: i64,
+) -> Result<crate::companies::Company, String> {
+    crate::companies::get_company(company_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Update a company
+#[tauri::command]
+pub async fn update_company(
+    company_id: i64,
+    name: Option<String>,
+    website: Option<String>,
+    industry: Option<String>,
+    company_size: Option<String>,
+    location: Option<String>,
+    description: Option<String>,
+    mission: Option<String>,
+    vision: Option<String>,
+    values: Option<String>,
+    notes: Option<String>,
+) -> Result<(), String> {
+    crate::companies::update_company(
+        company_id,
+        name,
+        website,
+        industry,
+        company_size,
+        location,
+        description,
+        mission,
+        vision,
+        values,
+        notes,
+    )
+    .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Delete a company
+#[tauri::command]
+pub async fn delete_company(company_id: i64, force: Option<bool>) -> Result<(), String> {
+    crate::companies::delete_company(company_id, force.unwrap_or(false))
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Link a job to a company
+#[tauri::command]
+pub async fn link_job_to_company(job_id: i64, company_id: i64) -> Result<(), String> {
+    crate::companies::link_job_to_company(job_id, company_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Link an application to a company
+#[tauri::command]
+pub async fn link_application_to_company(application_id: i64, company_id: i64) -> Result<(), String> {
+    crate::companies::link_application_to_company(application_id, company_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Unlink a job from its company
+#[tauri::command]
+pub async fn unlink_job_from_company(job_id: i64) -> Result<(), String> {
+    crate::companies::unlink_job_from_company(job_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Unlink an application from its company
+#[tauri::command]
+pub async fn unlink_application_from_company(application_id: i64) -> Result<(), String> {
+    crate::companies::unlink_application_from_company(application_id)
+        .map_err(|e| e.to_string_for_tauri())
+}
+
+/// Fetch company information from a website URL using AI
+#[tauri::command]
+pub async fn fetch_company_info_from_url(url: String, bypass_cache: Option<bool>) -> Result<crate::companies::Company, String> {
+    use crate::ai_cache::{ai_cache_get, ai_cache_put, compute_input_hash, CACHE_TTL_JOB_PARSE_DAYS};
+    use crate::db::get_connection;
+    use chrono::Utc;
+    
+    let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
+    let now = Utc::now().to_rfc3339();
+    
+    // Build canonical input for caching
+    let request_payload = serde_json::json!({
+        "url": url,
+        "operation": "fetch_company_info"
+    });
+    
+    // Check cache (unless bypassing)
+    if !bypass_cache.unwrap_or(false) {
+        let input_hash = compute_input_hash(&request_payload)
+            .map_err(|e| format!("Failed to compute hash: {}", e))?;
+        
+        if let Some(cached_entry) = ai_cache_get(&conn, "company_fetch", &input_hash, &now)
+            .map_err(|e| format!("Cache lookup error: {}", e))? {
+            // Cache hit - deserialize and return
+            log::info!("[fetch_company_info] Returning cached company info for {}", url);
+            let company: crate::companies::Company = serde_json::from_value(cached_entry.response_payload)
+                .map_err(|e| format!("Failed to deserialize cached response: {}", e))?;
+            return Ok(company);
+        }
+    } else {
+        log::info!("[fetch_company_info] Bypassing cache for {}", url);
+    }
+    
+    // Cache miss - scrape and extract
+    log::info!("[fetch_company_info] Starting fetch for URL: {}", url);
+    
+    // Step 1: Scrape the website
+    log::info!("[fetch_company_info] Step 1: Scraping website...");
+    let scraped = crate::companies::scrape_company_website(&url)
+        .await
+        .map_err(|e| {
+            log::error!("[fetch_company_info] Scraping failed: {}", e);
+            format!("Failed to scrape website: {}", e)
+        })?;
+    
+    log::info!("[fetch_company_info] Scraped {} chars of content from website", scraped.raw_content.len());
+    log::info!("[fetch_company_info] Scraped name: {:?}, description: {:?}", 
+        scraped.name, scraped.description.as_ref().map(|d| &d[..d.len().min(100)]));
+    
+    // Step 2: Extract structured info using AI
+    log::info!("[fetch_company_info] Starting AI extraction for company info");
+    let company = crate::companies::extract_company_info_with_ai(&scraped)
+        .await
+        .map_err(|e| {
+            log::error!("[fetch_company_info] Failed to extract company info: {}", e);
+            format!("Failed to extract company info: {}. The AI may not have returned valid JSON. Please try again or manually enter the information.", e)
+        })?;
+    
+    log::info!("[fetch_company_info] Successfully extracted company info: name={}, industry={:?}, location={:?}, website={:?}", 
+        company.name, company.industry, company.location, company.website);
+    
+    // Cache the result (unless bypassing cache)
+    if !bypass_cache.unwrap_or(false) {
+        let input_hash = compute_input_hash(&request_payload)
+            .map_err(|e| format!("Failed to compute hash: {}", e))?;
+        let response_payload = serde_json::to_value(&company)
+            .map_err(|e| format!("Failed to serialize company: {}", e))?;
+        
+        ai_cache_put(
+            &conn,
+            "company_fetch",
+            &input_hash,
+            "local", // model name for caching purposes
+            &request_payload,
+            &response_payload,
+            Some(CACHE_TTL_JOB_PARSE_DAYS),
+            &now,
+        )
+        .map_err(|e| format!("Failed to cache result: {}", e))?;
+    }
+    
+    Ok(company)
+}
+
+/// Clear cached company information for a specific URL or all company fetch cache
+#[tauri::command]
+pub async fn clear_company_fetch_cache(url: Option<String>) -> Result<u64, String> {
+    use crate::ai_cache::{ai_cache_clear_purpose, compute_input_hash};
+    use crate::db::get_connection;
+    
+    let conn = get_connection().map_err(|e| format!("DB error: {}", e))?;
+    
+    if let Some(url_to_clear) = url {
+        // Clear cache for specific URL
+        let request_payload = serde_json::json!({
+            "url": url_to_clear,
+            "operation": "fetch_company_info"
+        });
+        let input_hash = compute_input_hash(&request_payload)
+            .map_err(|e| format!("Failed to compute hash: {}", e))?;
+        
+        // Delete specific cache entry
+        let count = conn.execute(
+            "DELETE FROM ai_cache WHERE purpose = 'company_fetch' AND input_hash = ?",
+            [input_hash],
+        ).map_err(|e| format!("Failed to clear cache: {}", e))?;
+        
+        log::info!("[clear_company_fetch_cache] Cleared {} cache entry(ies) for URL: {}", count, url_to_clear);
+        Ok(count as u64)
+    } else {
+        // Clear all company fetch cache
+        let count = ai_cache_clear_purpose(&conn, "company_fetch")
+            .map_err(|e| format!("Failed to clear cache: {}", e))?;
+        log::info!("[clear_company_fetch_cache] Cleared all {} company fetch cache entries", count);
+        Ok(count)
+    }
+}
+
 // User Profile types
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserProfile {
     pub id: Option<i64>,
     pub full_name: String,
@@ -1067,7 +1311,7 @@ pub struct Experience {
     pub tech_stack: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Skill {
     pub id: Option<i64>,
     pub name: String,
@@ -1078,7 +1322,7 @@ pub struct Skill {
     pub notes: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Education {
     pub id: Option<i64>,
     pub institution: String,
@@ -1090,7 +1334,7 @@ pub struct Education {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Certification {
     pub id: Option<i64>,
     pub name: String,
@@ -1101,7 +1345,7 @@ pub struct Certification {
     pub credential_url: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PortfolioItem {
     pub id: Option<i64>,
     pub title: String,
@@ -3971,101 +4215,90 @@ pub async fn extract_profile_from_resume(resume_text: String) -> Result<crate::p
     let provider = ResolvedProvider::resolve()
         .map_err(|e| format!("Failed to resolve provider: {}", e))?;
     
-    // Create prompt for profile extraction
-    let prompt = format!(
-        r#"Extract professional profile information from the following resume text. 
-Return a JSON object with the following structure:
+    // Process resume in chunks if it's too long
+    // Batch size is 2048 tokens, and we need to account for:
+    // - Prompt template (~500 tokens)
+    // - JSON schema in prompt (~300 tokens)
+    // - Response generation (~500 tokens)
+    // So we have ~750 tokens left for resume text per chunk
+    // Rough estimate: 1 token ≈ 4 characters, so ~2000 chars ≈ 500 tokens per chunk
+    // Use 1500 chars per chunk with 300 char overlap to ensure we don't lose information at boundaries
+    const CHUNK_SIZE: usize = 1500;
+    const OVERLAP_SIZE: usize = 300;
+    
+    let chunks = if resume_text.len() > CHUNK_SIZE {
+        log::info!("Resume text is {} chars, splitting into chunks for processing", resume_text.len());
+        split_resume_into_chunks(&resume_text, CHUNK_SIZE, OVERLAP_SIZE)
+    } else {
+        vec![resume_text.clone()]
+    };
+    
+    log::info!("Processing resume in {} chunk(s)", chunks.len());
+    for (idx, chunk) in chunks.iter().enumerate() {
+        log::debug!("Chunk {} preview (first 100 chars): {}", idx + 1, &chunk[..chunk.len().min(100)]);
+    }
+    
+    // Process each chunk and collect results
+    let mut all_results: Vec<crate::profile_import::ExtractedProfileData> = Vec::new();
+    
+    for (i, chunk) in chunks.iter().enumerate() {
+        log::info!("Processing chunk {}/{} ({} chars)", i + 1, chunks.len(), chunk.len());
+        
+        // Create prompt for profile extraction (concise to reduce token count)
+        let prompt = format!(
+        r#"Extract profile data from resume. Return JSON:
 {{
-  "profile": {{
-    "full_name": "string (required)",
-    "headline": "string (optional)",
-    "location": "string (optional)",
-    "summary": "string (optional, professional summary)",
-    "current_role_title": "string (optional)",
-    "current_company": "string (optional)",
-    "seniority": "string (optional: Junior, Mid, Senior, Lead, Manager, Director, VP, C-Level)",
-    "open_to_roles": "string (optional, comma-separated)"
-  }},
-  "experience": [
-    {{
-      "company": "string (required)",
-      "title": "string (required)",
-      "location": "string (optional)",
-      "start_date": "string (optional, YYYY-MM format)",
-      "end_date": "string (optional, YYYY-MM format, or null for current)",
-      "is_current": "boolean",
-      "description": "string (optional)",
-      "achievements": "string (optional, newline-separated bullets)",
-      "tech_stack": "string (optional, comma-separated)"
-    }}
-  ],
-  "skills": [
-    {{
-      "name": "string (required)",
-      "category": "string (optional: Technical, Soft, Domain, Tool)",
-      "self_rating": "integer (optional, 1-5)",
-      "priority": "string (optional: Core, Supporting, Learning)",
-      "years_experience": "number (optional)",
-      "notes": "string (optional)"
-    }}
-  ],
-  "education": [
-    {{
-      "institution": "string (required)",
-      "degree": "string (optional)",
-      "field_of_study": "string (optional)",
-      "start_date": "string (optional, YYYY-MM format)",
-      "end_date": "string (optional, YYYY-MM format)",
-      "grade": "string (optional)",
-      "description": "string (optional)"
-    }}
-  ],
-  "certifications": [
-    {{
-      "name": "string (required)",
-      "issuing_organization": "string (optional)",
-      "issue_date": "string (optional, YYYY-MM format)",
-      "expiration_date": "string (optional, YYYY-MM format)",
-      "credential_id": "string (optional)",
-      "credential_url": "string (optional)"
-    }}
-  ],
-  "portfolio": [
-    {{
-      "title": "string (required)",
-      "url": "string (optional)",
-      "description": "string (optional)",
-      "role": "string (optional)",
-      "tech_stack": "string (optional, comma-separated)",
-      "highlighted": "boolean"
-    }}
-  ]
+  "profile": {{"full_name": "", "headline": "", "location": "", "summary": "", "current_role_title": "", "current_company": "", "seniority": "", "open_to_roles": ""}},
+  "experience": [{{"company": "", "title": "", "location": "", "start_date": "YYYY-MM", "end_date": "YYYY-MM", "is_current": false, "description": "", "achievements": "", "tech_stack": ""}}],
+  "skills": [{{"name": "", "category": "", "self_rating": 0, "priority": "", "years_experience": 0, "notes": ""}}],
+  "education": [{{"institution": "", "degree": "", "field_of_study": "", "start_date": "YYYY-MM", "end_date": "YYYY-MM", "grade": "", "description": ""}}],
+  "certifications": [{{"name": "", "issuing_organization": "", "issue_date": "YYYY-MM", "expiration_date": "YYYY-MM", "credential_id": "", "credential_url": ""}}],
+  "portfolio": [{{"title": "", "url": "", "description": "", "role": "", "tech_stack": "", "highlighted": false}}]
 }}
 
-Resume text:
+Resume:
 {}
 
-Return only valid JSON, no markdown formatting."#,
-        resume_text
-    );
+Return JSON only."#,
+            chunk
+        );
+        
+        // Call AI provider using the new generic call_llm method
+        let system_prompt = Some("You are a professional profile extraction assistant. Extract structured profile information from resume text. Always return valid JSON matching the specified schema.");
+        
+        let response = provider.as_provider().call_llm(system_prompt, &prompt).await
+            .map_err(|e| {
+                log::error!("AI error on chunk {}: {}", i + 1, e);
+                format!("AI error on chunk {}: {}", i + 1, e)
+            })?;
+        
+        log::info!("Chunk {} processed successfully", i + 1);
+        log::debug!("Chunk {} response length: {} chars, preview: {}", i + 1, response.len(), &response[..response.len().min(200)]);
+        
+        // Extract JSON from response (may contain markdown code blocks)
+        let json_str = extract_json_from_text(&response);
+        log::debug!("Chunk {} extracted JSON length: {} chars, preview: {}", i + 1, json_str.len(), &json_str[..json_str.len().min(200)]);
+        
+        // Parse JSON response
+        let extracted: crate::profile_import::ExtractedProfileData = serde_json::from_str(&json_str)
+            .map_err(|e| {
+                log::error!("Failed to parse JSON for chunk {}: {}. Extracted JSON (first 500 chars): {}", i + 1, e, &json_str[..json_str.len().min(500)]);
+                format!("Failed to parse AI response as JSON for chunk {}: {}. Response was: {}", i + 1, e, json_str)
+            })?;
+        
+        log::info!("Chunk {} JSON parsed successfully, extracted {} experience entries, {} skills, {} education entries", 
+            i + 1, extracted.experience.len(), extracted.skills.len(), extracted.education.len());
+        
+        all_results.push(extracted);
+        log::info!("Chunk {} added to results. Total results so far: {}/{}. Continuing to next chunk...", i + 1, all_results.len(), chunks.len());
+    }
     
-    // Call AI provider using the new generic call_llm method
-    let system_prompt = Some("You are a professional profile extraction assistant. Extract structured profile information from resume text. Always return valid JSON matching the specified schema.");
+    // Merge all results into a single ExtractedProfileData
+    let merged = merge_extracted_profiles(all_results);
+    log::info!("Merged {} chunk(s) into final profile data", chunks.len());
     
-    let response = provider.as_provider()
-        .call_llm(system_prompt, &prompt)
-        .await
-        .map_err(|e| format!("AI error: {}", e))?;
-    
-    // Extract JSON from response (may contain markdown code blocks)
-    let json_str = extract_json_from_text(&response);
-    
-    // Parse JSON response
-    let extracted: crate::profile_import::ExtractedProfileData = serde_json::from_str(&json_str)
-        .map_err(|e| format!("Failed to parse AI response as JSON: {}. Response was: {}", e, json_str))?;
-    
-    // Cache the result
-    let response_payload = serde_json::to_value(&extracted)
+    // Cache the result (using original full text for cache key)
+    let response_payload = serde_json::to_value(&merged)
         .map_err(|e| format!("Failed to serialize response: {}", e))?;
     
     // Get model name from settings for cache
@@ -4086,27 +4319,220 @@ Return only valid JSON, no markdown formatting."#,
     )
     .map_err(|e| format!("Failed to cache result: {}", e))?;
     
-    Ok(extracted)
+    Ok(merged)
 }
 
-/// Helper function to extract JSON from text (handles markdown code blocks)
-fn extract_json_from_text(text: &str) -> String {
-    // Try to find JSON object boundaries
-    if let Some(start) = text.find('{') {
-        if let Some(end) = text.rfind('}') {
-            let json_candidate = &text[start..=end];
-            // Try to parse it to validate
-            if serde_json::from_str::<serde_json::Value>(json_candidate).is_ok() {
-                return json_candidate.to_string();
+/// Split resume text into overlapping chunks to ensure no information is lost
+fn split_resume_into_chunks(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    
+    while start < text.len() {
+        let end = (start + chunk_size).min(text.len());
+        let mut chunk_end = end;
+        
+        // If not the last chunk, try to end at a word boundary
+        if end < text.len() {
+            // Look for a good break point (newline, period, or space)
+            if let Some(newline_pos) = text[start..end].rfind('\n') {
+                chunk_end = start + newline_pos + 1;
+            } else if let Some(period_pos) = text[start..end].rfind('.') {
+                chunk_end = start + period_pos + 1;
+            } else if let Some(space_pos) = text[start..end].rfind(' ') {
+                chunk_end = start + space_pos + 1;
+            }
+        }
+        
+        chunks.push(text[start..chunk_end].to_string());
+        
+        // Move start forward, accounting for overlap
+        if chunk_end >= text.len() {
+            break;
+        }
+        start = chunk_end.saturating_sub(overlap);
+    }
+    
+    chunks
+}
+
+/// Merge multiple ExtractedProfileData results into one, deduplicating and combining data
+fn merge_extracted_profiles(results: Vec<crate::profile_import::ExtractedProfileData>) -> crate::profile_import::ExtractedProfileData {
+    use crate::profile_import::ExtractedProfileData;
+    use std::collections::HashSet;
+    
+    if results.is_empty() {
+        return ExtractedProfileData {
+            profile: None,
+            experience: Vec::new(),
+            skills: Vec::new(),
+            education: Vec::new(),
+            certifications: Vec::new(),
+            portfolio: Vec::new(),
+        };
+    }
+    
+    // Merge profile - take the first non-empty one, or merge fields
+    let mut merged_profile = results[0].profile.clone();
+    for result in results.iter().skip(1) {
+        if let Some(ref profile) = result.profile {
+            if merged_profile.is_none() {
+                merged_profile = Some(profile.clone());
+            } else if let Some(ref mut merged) = merged_profile {
+                // Merge fields, preferring non-empty values
+                if !profile.full_name.is_empty() && merged.full_name.is_empty() {
+                    merged.full_name = profile.full_name.clone();
+                }
+                if profile.headline.is_some() && merged.headline.is_none() {
+                    merged.headline = profile.headline.clone();
+                }
+                if profile.location.is_some() && merged.location.is_none() {
+                    merged.location = profile.location.clone();
+                }
+                // Merge summary if both exist (combine them)
+                if let Some(ref p_summary) = profile.summary {
+                    if let Some(ref m_summary) = merged.summary {
+                        if !p_summary.is_empty() && !m_summary.contains(p_summary.as_str()) {
+                            merged.summary = Some(format!("{}\n\n{}", m_summary, p_summary));
+                        }
+                    } else {
+                        merged.summary = profile.summary.clone();
+                    }
+                }
+                if profile.current_role_title.is_some() && merged.current_role_title.is_none() {
+                    merged.current_role_title = profile.current_role_title.clone();
+                }
+                if profile.current_company.is_some() && merged.current_company.is_none() {
+                    merged.current_company = profile.current_company.clone();
+                }
+                if profile.seniority.is_some() && merged.seniority.is_none() {
+                    merged.seniority = profile.seniority.clone();
+                }
+                if profile.open_to_roles.is_some() && merged.open_to_roles.is_none() {
+                    merged.open_to_roles = profile.open_to_roles.clone();
+                }
             }
         }
     }
     
-    // If no valid JSON found, try extracting from markdown code blocks
+    // Merge experience - deduplicate by company + title + start_date
+    let mut experience_set: HashSet<(String, String, Option<String>)> = HashSet::new();
+    let mut merged_experience = Vec::new();
+    for result in &results {
+        for exp in &result.experience {
+            let key = (
+                exp.company.clone(),
+                exp.title.clone(),
+                exp.start_date.clone(),
+            );
+            if experience_set.insert(key) {
+                merged_experience.push((*exp).clone());
+            }
+        }
+    }
+    
+    // Merge skills - deduplicate by name (case-insensitive)
+    let mut skills_set: HashSet<String> = HashSet::new();
+    let mut merged_skills: Vec<Skill> = Vec::new();
+    for result in &results {
+        for skill in &result.skills {
+            let key = skill.name.to_lowercase();
+            if skills_set.insert(key) {
+                merged_skills.push(skill.clone());
+            }
+        }
+    }
+    
+    // Merge education - deduplicate by institution + degree
+    let mut education_set: HashSet<(String, Option<String>)> = HashSet::new();
+    let mut merged_education: Vec<Education> = Vec::new();
+    for result in &results {
+        for edu in &result.education {
+            let key = (edu.institution.clone(), edu.degree.clone());
+            if education_set.insert(key) {
+                merged_education.push(edu.clone());
+            }
+        }
+    }
+    
+    // Merge certifications - deduplicate by name
+    let mut certs_set: HashSet<String> = HashSet::new();
+    let mut merged_certs: Vec<Certification> = Vec::new();
+    for result in &results {
+        for cert in &result.certifications {
+            let key = cert.name.to_lowercase();
+            if certs_set.insert(key) {
+                merged_certs.push(cert.clone());
+            }
+        }
+    }
+    
+    // Merge portfolio - deduplicate by title + url
+    let mut portfolio_set: HashSet<(String, Option<String>)> = HashSet::new();
+    let mut merged_portfolio: Vec<PortfolioItem> = Vec::new();
+    for result in &results {
+        for item in &result.portfolio {
+            let key = (item.title.clone(), item.url.clone());
+            if portfolio_set.insert(key) {
+                merged_portfolio.push(item.clone());
+            }
+        }
+    }
+    
+    ExtractedProfileData {
+        profile: merged_profile,
+        experience: merged_experience,
+        skills: merged_skills,
+        education: merged_education,
+        certifications: merged_certs,
+        portfolio: merged_portfolio,
+    }
+}
+
+/// Helper function to extract JSON from text (handles markdown code blocks)
+fn extract_json_from_text(text: &str) -> String {
+    // First, try extracting from markdown code blocks (most reliable)
     if let Some(start) = text.find("```json") {
-        let after_start = &text[start + 7..];
+        let after_start = &text[start + 7..]; // Skip "```json"
+        // Try to find closing ```
         if let Some(end) = after_start.find("```") {
-            return after_start[..end].trim().to_string();
+            let candidate = after_start[..end].trim();
+            // Try to parse it to validate
+            if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
+                return candidate.to_string();
+            }
+        }
+        // If no closing ```, find the first '{' after ```json (this should be the root object)
+        // Skip any whitespace/newlines after ```json
+        let trimmed = after_start.trim_start();
+        if let Some(root_start) = trimmed.find('{') {
+            // Match braces forward from the root '{' to find the complete root object
+            let mut brace_count = 0;
+            let mut root_end = None;
+            
+            for (i, ch) in trimmed[root_start..].char_indices() {
+                match ch {
+                    '{' => {
+                        brace_count += 1;
+                    }
+                    '}' => {
+                        brace_count -= 1;
+                        if brace_count == 0 {
+                            // Found the matching closing brace for the root object
+                            root_end = Some(root_start + i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            
+            if let Some(end) = root_end {
+                let json_candidate = &trimmed[root_start..=end];
+                // Try to parse it to validate
+                if serde_json::from_str::<serde_json::Value>(json_candidate).is_ok() {
+                    return json_candidate.to_string();
+                }
+            }
         }
     }
     
@@ -4123,7 +4549,50 @@ fn extract_json_from_text(text: &str) -> String {
         }
     }
     
-    // Fallback: return the whole text
+    // Try to find JSON object by matching braces properly
+    // Start from the last '}' and work backwards to find the matching '{'
+    // This ensures we get the complete root object
+    if let Some(end_pos) = text.rfind('}') {
+        let mut brace_count = 0;
+        let mut start_pos = None;
+        
+        // Work backwards from the last '}' to find the matching '{'
+        for (i, ch) in text[..=end_pos].char_indices().rev() {
+            match ch {
+                '}' => brace_count += 1,
+                '{' => {
+                    brace_count -= 1;
+                    if brace_count == 0 {
+                        start_pos = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        if let Some(start) = start_pos {
+            let json_candidate = &text[start..=end_pos];
+            // Try to parse it to validate
+            if serde_json::from_str::<serde_json::Value>(json_candidate).is_ok() {
+                return json_candidate.to_string();
+            }
+        }
+    }
+    
+    // Fallback: try simple first '{' to last '}' approach
+    if let Some(start) = text.find('{') {
+        if let Some(end) = text.rfind('}') {
+            if end > start {
+                let json_candidate = &text[start..=end];
+                if serde_json::from_str::<serde_json::Value>(json_candidate).is_ok() {
+                    return json_candidate.to_string();
+                }
+            }
+        }
+    }
+    
+    // Last resort: return the whole text and let the parser handle it
     text.to_string()
 }
 
@@ -4218,4 +4687,252 @@ pub async fn evict_cache_by_count(max_entries: u64) -> Result<u64, String> {
     
     ai_cache_evict_lru(&conn, max_entries)
         .map_err(|e| format!("Failed to evict cache: {}", e))
+}
+
+// ============================================================================
+// Model Download Commands
+// ============================================================================
+
+/// Download a GGUF model from Hugging Face
+#[tauri::command]
+pub async fn download_model(model_url: Option<String>) -> Result<String, String> {
+    use crate::db::get_app_data_dir;
+    use tokio::fs;
+    use tokio::io::AsyncWriteExt;
+    
+    // Default to Phi-3-mini if no URL provided
+    // Try multiple possible URLs since Hugging Face file locations can vary
+    let base_urls = if let Some(url) = model_url {
+        vec![url]
+    } else {
+        // Based on actual Hugging Face repository structure, files are often in subdirectories
+        // Try common variations of the file paths
+        vec![
+            // Try with different subdirectory structures (common in GGUF repos)
+            "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4_k_m.gguf".to_string(),
+            // Try with gguf/ subdirectory
+            "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/gguf/Phi-3-mini-4k-instruct-q4_k_m.gguf".to_string(),
+            // Try with models/ subdirectory
+            "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/models/Phi-3-mini-4k-instruct-q4_k_m.gguf".to_string(),
+            // Try alternative quantization that might exist
+            "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4_0.gguf".to_string(),
+            // Try with gguf subdirectory and q4_0
+            "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/gguf/Phi-3-mini-4k-instruct-q4_0.gguf".to_string(),
+            // Try using the raw.githubusercontent.com format (some repos use this)
+            "https://raw.githubusercontent.com/microsoft/Phi-3-mini-4k-instruct-gguf/main/Phi-3-mini-4k-instruct-q4_k_m.gguf".to_string(),
+        ]
+    };
+    
+    // Create models directory
+    let app_data_dir = get_app_data_dir();
+    let models_dir = app_data_dir.join("models");
+    fs::create_dir_all(&models_dir)
+        .await
+        .map_err(|e| format!("Failed to create models directory: {}", e))?;
+    
+    // Determine filename from first URL, stripping query parameters
+    let url_without_query = base_urls[0].split('?').next()
+        .ok_or_else(|| "Invalid URL: could not parse URL".to_string())?;
+    let filename = url_without_query.split('/').last()
+        .ok_or_else(|| "Invalid URL: could not extract filename".to_string())?;
+    let file_path = models_dir.join(filename);
+    
+    // Check if file already exists
+    if file_path.exists() {
+        log::info!("Model file already exists at: {}", file_path.display());
+        return Ok(format!("{}", file_path.display()));
+    }
+    
+    // Check for files with query parameters in the name (from previous buggy downloads)
+    // and automatically clean them up
+    if let Ok(entries) = std::fs::read_dir(&models_dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.contains('?') {
+                    let invalid_path = entry.path();
+                    log::warn!("Found file with query parameters in name: {}. This is from a previous bug. Deleting it automatically.", name);
+                    if let Err(e) = std::fs::remove_file(&invalid_path) {
+                        log::error!("Failed to delete invalid model file {}: {}", invalid_path.display(), e);
+                    } else {
+                        log::info!("Successfully deleted invalid model file: {}", name);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Create HTTP client with proper headers and redirect following
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600)) // 10 minute timeout for large files
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    // Try each URL until one works
+    let mut last_error = None;
+    let mut response = None;
+    let mut successful_url = None;
+    
+    for url in &base_urls {
+        log::info!("Trying to download from: {}", url);
+        match client.get(url).send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    response = Some(resp);
+                    successful_url = Some(url.clone());
+                    break;
+                } else if resp.status() == 404 {
+                    last_error = Some(format!("File not found at: {}", url));
+                    continue;
+                } else {
+                    last_error = Some(format!("HTTP error {}: {}", resp.status(), url));
+                    continue;
+                }
+            }
+            Err(e) => {
+                last_error = Some(format!("Network error: {}", e));
+                continue;
+            }
+        }
+    }
+    
+    let response = response.ok_or_else(|| {
+        let error_msg = format!(
+            "Failed to download model. Tried {} URLs. Last error: {}.\n\nTo fix this:\n1. Visit https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/tree/main\n2. Find the GGUF file you want (e.g., Phi-3-mini-4k-instruct-q4_k_m.gguf)\n3. Right-click the file and select 'Copy link address'\n4. Use the 'Use Custom URL' option below and paste the URL",
+            base_urls.len(),
+            last_error.unwrap_or_else(|| "Unknown error".to_string())
+        );
+        error_msg
+    })?;
+    
+    log::info!("Successfully connected to: {}", successful_url.as_ref().unwrap());
+    
+    // Get content length for progress tracking
+    let total_size = response.content_length().unwrap_or(0);
+    log::info!("Starting download of {} bytes", total_size);
+    
+    // Download all bytes at once (for large files, this is simpler)
+    // For very large files, you might want to stream, but this works for most cases
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+    
+    // Write to file
+    let mut file = fs::File::create(&file_path)
+        .await
+        .map_err(|e| format!("Failed to create file: {}", e))?;
+    
+    file.write_all(&bytes)
+        .await
+        .map_err(|e| format!("Failed to write file: {}", e))?;
+    
+    file.sync_all()
+        .await
+        .map_err(|e| format!("Failed to sync file: {}", e))?;
+    
+    log::info!("Downloaded {} bytes successfully", bytes.len());
+    
+    log::info!("Model downloaded successfully to: {}", file_path.display());
+    Ok(format!("{}", file_path.display()))
+}
+
+/// Clean up invalid model files (those with query parameters in the filename)
+#[tauri::command]
+pub async fn cleanup_invalid_model_files() -> Result<Vec<String>, String> {
+    use crate::db::get_app_data_dir;
+    use std::fs;
+    
+    let app_data_dir = get_app_data_dir();
+    let models_dir = app_data_dir.join("models");
+    
+    if !models_dir.exists() {
+        return Ok(Vec::new());
+    }
+    
+    let mut cleaned_files = Vec::new();
+    
+    if let Ok(entries) = fs::read_dir(&models_dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.contains('?') {
+                    let invalid_path = entry.path();
+                    log::info!("Cleaning up invalid model file: {}", name);
+                    match fs::remove_file(&invalid_path) {
+                        Ok(_) => {
+                            cleaned_files.push(name.to_string());
+                            log::info!("Successfully deleted invalid model file: {}", name);
+                        }
+                        Err(e) => {
+                            log::error!("Failed to delete invalid model file {}: {}", invalid_path.display(), e);
+                            return Err(format!("Failed to delete invalid model file {}: {}", name, e));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if cleaned_files.is_empty() {
+        log::info!("No invalid model files found to clean up");
+    } else {
+        log::info!("Cleaned up {} invalid model file(s)", cleaned_files.len());
+    }
+    
+    Ok(cleaned_files)
+}
+
+/// Find model files in the models directory
+#[tauri::command]
+pub async fn find_model_files() -> Result<Vec<String>, String> {
+    use crate::db::get_app_data_dir;
+    use std::fs;
+    
+    let app_data_dir = get_app_data_dir();
+    let models_dir = app_data_dir.join("models");
+    
+    if !models_dir.exists() {
+        return Ok(Vec::new());
+    }
+    
+    let mut model_files = Vec::new();
+    
+    if let Ok(entries) = fs::read_dir(&models_dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.ends_with(".gguf") && !name.contains('?') {
+                    let full_path = entry.path();
+                    model_files.push(full_path.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    
+    Ok(model_files)
+}
+
+/// Clear invalid model path from settings if it contains query parameters
+#[tauri::command]
+pub async fn clear_invalid_model_path() -> Result<bool, String> {
+    use crate::ai::settings::{load_ai_settings, save_ai_settings};
+    
+    let mut settings = load_ai_settings()
+        .map_err(|e| format!("Failed to load settings: {}", e))?;
+    
+    let mut cleared = false;
+    
+    // Check if local_model_path contains query parameters
+    if let Some(ref path_str) = settings.local_model_path {
+        if path_str.contains('?') {
+            log::info!("Clearing invalid model path from settings: {}", path_str);
+            settings.local_model_path = None;
+            save_ai_settings(&settings)
+                .map_err(|e| format!("Failed to save settings: {}", e))?;
+            cleared = true;
+            log::info!("Successfully cleared invalid model path from settings");
+        }
+    }
+    
+    Ok(cleared)
 }
